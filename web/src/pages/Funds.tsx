@@ -76,6 +76,7 @@ export default function FundsPage() {
   // Search State
   const [marketOptions, setMarketOptions] = useState<MarketFund[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
+  const [inputValue, setInputValue] = useState('');
 
   // Menu State
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
@@ -190,8 +191,8 @@ export default function FundsPage() {
   };
 
   // Search Logic
-  const handleFundSearch = async (_event: any, value: string) => {
-    if (!value || value.length < 2) { // Only search if length >= 2 to save API calls
+  const triggerSearch = async (value: string) => {
+    if (!value || value.length < 2) { 
         setMarketOptions([]);
         return;
     }
@@ -204,6 +205,13 @@ export default function FundsPage() {
     } finally {
         setSearchLoading(false);
     }
+  };
+
+  const handleSearchKeyDown = (event: React.KeyboardEvent) => {
+      if (event.key === 'Enter') {
+          event.preventDefault();
+          triggerSearch(inputValue);
+      }
   };
 
   const handleFundSelect = (_event: any, value: MarketFund | null) => {
@@ -437,14 +445,17 @@ export default function FundsPage() {
                             MARKET SEARCH
                         </Typography>
                         <Autocomplete
+                            freeSolo
                             options={marketOptions}
-                            getOptionLabel={(option) => `${option.code} ${option.name}`}
+                            getOptionLabel={(option) => typeof option === 'string' ? option : `${option.code} ${option.name}`}
                             loading={searchLoading}
-                            onInputChange={handleFundSearch}
+                            inputValue={inputValue}
+                            onInputChange={(_, newInputValue) => setInputValue(newInputValue)}
                             onChange={handleFundSelect}
                             filterOptions={(x) => x}
                             renderOption={(props, option) => {
                                 const { key, ...otherProps } = props;
+                                if (typeof option === 'string') return null;
                                 return (
                                 <li key={key} {...otherProps} className="hover:bg-slate-50">
                                     <div className="flex items-center w-full">
@@ -466,8 +477,9 @@ export default function FundsPage() {
                             renderInput={(params) => (
                                 <TextField
                                     {...params}
-                                    placeholder="Type fund code or name..."
+                                    placeholder="Type fund code/name & Press Enter..."
                                     size="small"
+                                    onKeyDown={handleSearchKeyDown}
                                     InputProps={{
                                         ...params.InputProps,
                                         endAdornment: (

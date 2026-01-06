@@ -55,7 +55,7 @@ export const fetchFunds = async (): Promise<FundItem[]> => {
 };
 
 export const saveFund = async (fund: FundItem): Promise<void> => {
-  await axios.post(`${API_BASE}/funds`, fund);
+  await axios.put(`${API_BASE}/funds/${fund.code}`, fund);
 };
 
 export const deleteFund = async (code: string): Promise<void> => {
@@ -70,7 +70,7 @@ export interface MarketFund {
 }
 
 export const searchMarketFunds = async (query: string): Promise<MarketFund[]> => {
-    const response = await axios.get(`${API_BASE}/market-funds`, { params: { query } });
+    const response = await axios.get(`${API_BASE}/market/funds`, { params: { q: query } });
     return response.data;
 };
 

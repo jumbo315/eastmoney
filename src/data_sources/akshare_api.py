@@ -273,7 +273,7 @@ def get_industry_capital_flow(industry: str = None) -> Dict:
         df = ak.stock_sector_fund_flow_rank()
         if not df.empty:
             if industry:
-                filtered = df[df['名称'].str.contains(industry, na=False)]
+                filtered = df[df['名称'].str.contains(industry, na=False, regex=False)]
                 if not filtered.empty:
                     return filtered.iloc[0].to_dict()
             # 返回前10行业
@@ -360,7 +360,7 @@ def get_sector_performance(sector_name: str = None) -> Dict:
         df = ak.stock_board_industry_name_em()
         if not df.empty:
             if sector_name:
-                filtered = df[df['板块名称'].str.contains(sector_name, na=False)]
+                filtered = df[df['板块名称'].str.contains(sector_name, na=False, regex=False)]
                 if not filtered.empty:
                     return filtered.iloc[0].to_dict()
             return {"板块涨幅榜": df.head(10).to_dict('records')}
@@ -376,7 +376,7 @@ def get_concept_board_performance(concept: str = None) -> Dict:
         df = ak.stock_board_concept_name_em()
         if not df.empty:
             if concept:
-                filtered = df[df['板块名称'].str.contains(concept, na=False)]
+                filtered = df[df['板块名称'].str.contains(concept, na=False, regex=False)]
                 if not filtered.empty:
                     return filtered.to_dict('records')
             return {"概念板块Top10": df.head(10).to_dict('records')}
@@ -479,23 +479,109 @@ def get_market_indices():
         return {}
 
 def get_all_fund_list() -> List[Dict]:
+
     """
+
     获取全市场所有基金列表
+
     Returns: List of dicts with 'code', 'name', 'type', etc.
+
     """
+
     try:
+
         # fund_name_em returns: 基金代码, 基金简称, 基金类型, 拼音缩写
+
         df = ak.fund_name_em()
+
         if not df.empty:
+
             # Rename columns for consistency
+
             # 基金代码 -> code, 基金简称 -> name, 基金类型 -> type, 拼音缩写 -> pinyin
+
             df = df.rename(columns={
+
                 '基金代码': 'code',
+
                 '基金简称': 'name',
+
                 '基金类型': 'type',
+
                 '拼音缩写': 'pinyin'
+
             })
+
             return df[['code', 'name', 'type', 'pinyin']].to_dict('records')
+
     except Exception as e:
+
         print(f"Error fetching all fund list: {e}")
+
     return []
+
+
+
+def search_funds(query: str, limit: int = 10) -> List[Dict]:
+
+    """
+
+    Search funds by code or name (fuzzy matching)
+
+    """
+
+    query = query.strip().lower()
+
+    if not query:
+
+        return []
+
+
+
+    all_funds = get_all_fund_list()
+
+    results = []
+
+    
+
+    # Priority 1: Exact Code Match
+
+    for fund in all_funds:
+
+        if fund['code'] == query:
+
+            results.append(fund)
+
+    
+
+    # Priority 2: Code Starts With
+
+    for fund in all_funds:
+
+        if fund['code'].startswith(query) and fund not in results:
+
+            results.append(fund)
+
+            
+
+    # Priority 3: Name Contains
+
+    for fund in all_funds:
+
+        if query in fund['name'].lower() and fund not in results:
+
+            results.append(fund)
+
+            
+
+    # Priority 4: Pinyin Contains
+
+    for fund in all_funds:
+
+        if 'pinyin' in fund and query in str(fund['pinyin']).lower() and fund not in results:
+
+            results.append(fund)
+
+            
+
+    return results[:limit]

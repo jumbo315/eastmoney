@@ -13,6 +13,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from src.analysis.pre_market import PreMarketAnalyst
 from src.analysis.post_market import PostMarketAnalyst
+from src.data_sources.akshare_api import search_funds
 from src.storage.db import init_db, get_active_funds, get_all_funds, upsert_fund, delete_fund, get_fund_by_code
 from src.scheduler.manager import scheduler_manager
 from src.report_gen import save_report
@@ -67,6 +68,8 @@ class FundItem(BaseModel):
     name: str
     style: Optional[str] = "Unknown"
     focus: Optional[List[str]] = []
+    pre_market_time: Optional[str] = None
+    post_market_time: Optional[str] = None
     pre_market_time: Optional[str] = None # HH:MM
     post_market_time: Optional[str] = None # HH:MM
     is_active: bool = True
@@ -136,23 +139,31 @@ async def list_reports():
         pass
 
     reports = []
-    files = glob.glob(os.path.join(REPORT_DIR, "*_report.md"))
+    # Match all .md files
+    files = glob.glob(os.path.join(REPORT_DIR, "*.md"))
     files.sort(key=os.path.getmtime, reverse=True) # Newest first
     
     for f in files:
         filename = os.path.basename(f)
         try:
-            # Expected formats:
-            # 1. YYYY-MM-DD_mode_SUMMARY.md
-            # 2. YYYY-MM-DD_mode_CODE_NAME.md
+            # Remove extension
+            name_no_ext = os.path.splitext(filename)[0]
             
-            parts = filename.replace("_report.md", "").split("_")
+            # Old format compatibility: remove _report suffix if strictly present in the middle (unlikely now but good for safety)
+            # Actually, let's just split by "_"
+            parts = name_no_ext.split("_")
+            
+            # Expected formats:
+            # 1. YYYY-MM-DD_mode_SUMMARY
+            # 2. YYYY-MM-DD_mode_CODE_NAME
+            # 3. YYYY-MM-DD_mode_report (Old legacy)
+            
             if len(parts) < 2: continue
             
             date_str = parts[0]
             mode = parts[1]
             
-            if "SUMMARY" in filename:
+            if "SUMMARY" in name_no_ext or (len(parts) > 2 and parts[2] == "report"):
                  reports.append(ReportSummary(
                     filename=filename, 
                     date=date_str, 
@@ -160,20 +171,23 @@ async def list_reports():
                     is_summary=True,
                     fund_name="Market Overview"
                 ))
-            else:
-                 # Try to extract code. Assuming format YYYY-MM-DD_mode_CODE_NAME.md
-                 # If we used the new save_report function in src/report_gen.py
-                 if len(parts) >= 3:
-                     code = parts[2]
-                     name = fund_map.get(code, code)
-                     reports.append(ReportSummary(
-                        filename=filename, 
-                        date=date_str, 
-                        mode=mode, 
-                        fund_code=code,
-                        fund_name=name,
-                        is_summary=False
-                    ))
+            elif len(parts) >= 3:
+                 # Format: YYYY-MM-DD_mode_CODE_NAME...
+                 code = parts[2]
+                 # Join the rest as name (in case name has underscores, though sanitized)
+                 extracted_name = "_".join(parts[3:]) if len(parts) > 3 else ""
+                 
+                 # Use extracted name if available, else fallback to map, else code
+                 final_name = extracted_name if extracted_name else fund_map.get(code, code)
+                 
+                 reports.append(ReportSummary(
+                    filename=filename, 
+                    date=date_str, 
+                    mode=mode, 
+                    fund_code=code,
+                    fund_name=final_name,
+                    is_summary=False
+                ))
         except Exception as e:
             print(f"Error parsing filename {filename}: {e}")
             continue
@@ -305,29 +319,58 @@ async def get_funds_endpoint():
         return []
 
 @app.post("/api/funds")
-async def save_fund_endpoint(fund: FundItem):
+async def save_funds(funds: List[FundItem]):
     try:
-        fund_data = fund.model_dump()
-        upsert_fund(fund_data)
+        # Bulk upsert using DB
+        for fund in funds:
+            fund_dict = fund.model_dump()
+            # Ensure JSON serialization for list fields if needed by DB wrapper, 
+            # but src.storage.db.upsert_fund handles dicts. 
+            # Ideally db.upsert_fund expects a dict matching the schema.
+            # We need to ensure focus is list or string? 
+            # In db.py, it handles conversion.
+            upsert_fund(fund_dict)
+        return {"status": "success"}
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/api/funds/{code}")
+async def upsert_fund_endpoint(code: str, fund: FundItem):
+    try:
+        fund_dict = fund.model_dump()
+        upsert_fund(fund_dict)
         
-        # Sync with scheduler
-        scheduler_manager.add_fund_jobs(fund_data)
+        # Also update scheduler!
+        scheduler_manager.add_fund_jobs(fund_dict)
         
         return {"status": "success"}
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.delete("/api/funds/{code}")
 async def delete_fund_endpoint(code: str):
     try:
         delete_fund(code)
-        
-        # Sync with scheduler
+        # Remove from scheduler
         scheduler_manager.remove_fund_jobs(code)
-        
         return {"status": "success"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/market/funds")
+async def search_market_funds(q: str):
+    if not q:
+        return []
+    try:
+        results = search_funds(q)
+        return results
+    except Exception as e:
+        print(f"Search error: {e}")
+        return []
 
 @app.get("/api/settings")
 async def get_settings():

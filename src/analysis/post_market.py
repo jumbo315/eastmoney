@@ -13,7 +13,7 @@ import json
 import sys
 import os
 from typing import List, Dict
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # Add project root to sys.path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -43,7 +43,16 @@ class PostMarketAnalyst:
         self.web_search = WebSearch()
         self.llm = get_llm_client()
         self.funds = self._load_funds()
-        self.today = datetime.now().strftime("%Y-%m-%d")
+        
+        # Determine analysis date based on market hours
+        # If before 15:00, analyze yesterday's close
+        # If after 15:00, analyze today's close
+        now = datetime.now()
+        if now.hour < 15:
+            self.today = (now - timedelta(days=1)).strftime("%Y-%m-%d")
+        else:
+            self.today = now.strftime("%Y-%m-%d")
+            
         self.sources = []  # 数据来源追踪
 
     def _load_funds(self) -> List[Dict]:
