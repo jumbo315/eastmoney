@@ -5,7 +5,8 @@ from typing import List, Dict, Optional
 
 # Define paths relative to this file
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-DB_PATH = os.path.join(BASE_DIR, "funds.db")
+# Allow overriding via environment variable for Docker volumes
+DB_PATH = os.environ.get("DB_FILE_PATH", os.path.join(BASE_DIR, "funds.db"))
 FUNDS_JSON_PATH = os.path.join(BASE_DIR, "config", "funds.json")
 
 def get_db_connection():

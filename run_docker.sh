@@ -17,33 +17,38 @@ if ! command -v docker-compose &> /dev/null && ! docker compose version &> /dev/
     exit 1
 fi
 
-# 2. 确保必要的目录和文件存在
-echo -e "${GREEN}--> 检查目录结构...${NC}"
+# 2. 确保必要的目录结构存在
+echo -e "${GREEN}--> 检查并创建目录结构...${NC}"
 mkdir -p reports/commodities
 mkdir -p reports/sentiment
 mkdir -p config
+mkdir -p data
 
-# 关键修复：如果 funds.db 是目录，先删除；确保它是一个文件
-if [ -d "funds.db" ]; then
-    echo "Warning: funds.db is a directory, removing it..."
-    rm -rf funds.db
+# 3. 初始化数据库文件（避免 Docker 创建为目录）
+if [ ! -f "data/funds.db" ]; then
+    if [ -d "data/funds.db" ]; then
+        echo "Removing erroneous directory 'data/funds.db'..."
+        rm -rf data/funds.db
+    fi
+    echo "Creating empty database file in data/funds.db..."
+    touch data/funds.db
 fi
 
-if [ ! -f "funds.db" ]; then
-    echo "Creating empty funds.db file..."
-    touch funds.db
+# 清理旧的根目录 funds.db（如果存在且不再使用）
+if [ -e "funds.db" ]; then
+    echo "Note: Legacy 'funds.db' found in root. Migration to 'data/funds.db' is handled by volume mapping if you manually moved data."
+    # Optional: mv funds.db data/funds.db if data/funds.db is empty
 fi
 
-# 3. 构建并启动容器
+# 4. 构建并启动容器
 echo -e "${GREEN}--> 构建并启动容器...${NC}"
-# 使用 docker compose (新版) 或 docker-compose (旧版)
 if docker compose version &> /dev/null; then
     docker compose up -d --build
 else
     docker-compose up -d --build
 fi
 
-# 4. 显示状态
+# 5. 显示状态
 echo -e "${GREEN}--> 部署完成！容器状态：${NC}"
 if docker compose version &> /dev/null; then
     docker compose ps
@@ -51,5 +56,5 @@ else
     docker-compose ps
 fi
 
-echo -e "${GREEN}=== 服务已在端口 80 上线 ===${NC}"
-echo "访问地址: http://localhost (或服务器 IP)"
+echo -e "${GREEN}=== 服务已上线 ===${NC}"
+echo "域名访问: http://valpha.luminaBrain.cn"
