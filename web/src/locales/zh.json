@@ -32,6 +32,8 @@
       "stocks_sub": "自选股监控",
       "recommendations": "AI精选",
       "recommendations_sub": "智能投资推荐",
+      "news": "资讯中心",
+      "news_sub": "个性化财经资讯",
       "sentiment": "情绪",
       "sentiment_sub": "市场情绪分析",
       "intelligence": "情报",
@@ -58,6 +60,47 @@
   },
   "dashboard": {
     "title": "市场概览",
+    "edit_mode": "编辑模式",
+    "save_layout": "保存布局",
+    "cancel_edit": "取消",
+    "add_widget": "添加组件",
+    "reset_layout": "重置",
+    "layout_saved": "布局保存成功",
+    "layout_save_error": "保存布局失败",
+    "presets": {
+      "title": "布局模板",
+      "trader": "交易者视图",
+      "investor": "投资者视图",
+      "macro": "宏观视图",
+      "compact": "精简视图"
+    },
+    "widgets": {
+      "market_indices": "市场指数",
+      "northbound_flow": "北向资金",
+      "industry_flow": "行业资金流",
+      "sector_performance": "板块涨跌",
+      "top_list": "龙虎榜",
+      "forex_rates": "外汇汇率",
+      "market_sentiment": "市场情绪",
+      "gold_macro": "黄金宏观",
+      "abnormal_movements": "实时异动",
+      "main_capital_flow": "主力资金",
+      "system_stats": "系统统计",
+      "watchlist": "自选股",
+      "news": "新闻资讯"
+    },
+    "widget_picker": {
+      "title": "添加组件",
+      "search": "搜索组件...",
+      "categories": {
+        "market": "市场",
+        "capital": "资金流向",
+        "macro": "宏观",
+        "signals": "信号",
+        "personal": "个人"
+      },
+      "points_required": "需要 {{points}} TuShare积分"
+    },
     "macro": {
       "system_reports": "系统研报",
       "files": "文件",
@@ -202,6 +245,117 @@
       "pe": "市盈率",
       "pb": "市净率",
       "close": "关闭"
+    },
+    "tabs": {
+      "overview": "概览",
+      "financial": "财务分析",
+      "shareholder": "股东分析",
+      "margin": "杠杆资金",
+      "events": "事件日历",
+      "quant": "量化信号"
+    },
+    "professional": {
+      "load_error": "加载数据失败",
+      "no_data": "暂无数据"
+    },
+    "financial": {
+      "health_score": "财务健康评分",
+      "health_excellent": "优秀",
+      "health_good": "良好",
+      "health_fair": "一般",
+      "health_poor": "较差",
+      "key_metrics": "核心财务指标",
+      "net_margin": "净利率",
+      "gross_margin": "毛利率",
+      "debt_ratio": "资产负债率",
+      "current_ratio": "流动比率",
+      "roe_trend": "ROE趋势 (8季度)",
+      "profitability": "季度盈利能力",
+      "yoy_growth": "同比增长"
+    },
+    "shareholder": {
+      "concentration": "股东集中度",
+      "concentrating": "筹码集中",
+      "dispersing": "筹码分散",
+      "concentration_tip_positive": "股东人数减少表明筹码集中，可能是积极信号",
+      "concentration_tip_negative": "股东人数增加表明筹码分散，需谨慎",
+      "holder_trend": "股东人数变化趋势",
+      "top10": "十大股东",
+      "holder_name": "股东名称",
+      "hold_amount": "持股数",
+      "hold_ratio": "持股比例",
+      "unit_yi": "亿",
+      "unit_wan": "万"
+    },
+    "margin": {
+      "leverage_sentiment": "杠杆资金情绪",
+      "bullish": "看多",
+      "bearish": "看空",
+      "neutral": "中性",
+      "balance_summary": "融资融券余额",
+      "financing_balance": "融资余额",
+      "lending_balance": "融券余额",
+      "financing_buy": "融资买入额",
+      "lending_sell": "融券卖出量",
+      "trend_30d": "30日走势",
+      "last_update": "更新时间",
+      "5d": "5日",
+      "unit_yi": "亿",
+      "unit_wan": "万"
+    },
+    "events": {
+      "tab_upcoming": "即将发生",
+      "tab_forecast": "业绩预告",
+      "tab_unlock": "限售解禁",
+      "tab_dividend": "分红送转",
+      "no_upcoming": "暂无即将发生的事件",
+      "no_forecast": "暂无业绩预告",
+      "no_unlock": "暂无解禁计划",
+      "no_dividend": "暂无分红记录",
+      "announced": "公告日期",
+      "upcoming": "即将",
+      "unknown": "未知",
+      "fiscal_year": "财年",
+      "yuan_per_share": "元/股",
+      "stock_div": "送股",
+      "ex_date": "除权日",
+      "unit_wan": "万股"
+    },
+    "quant": {
+      "overall_signal": "综合信号",
+      "bullish": "看多",
+      "bearish": "看空",
+      "neutral": "中性",
+      "overbought": "超买",
+      "oversold": "超卖",
+      "strength": "信号强度",
+      "strength_strong": "强",
+      "strength_moderate": "中",
+      "strength_weak": "弱",
+      "tech_indicators": "技术指标",
+      "macd_histogram": "MACD柱状图 (20日)",
+      "chip_distribution": "筹码分布",
+      "winner_rate": "获利比例",
+      "avg_cost": "平均成本",
+      "cost": "成本"
+    },
+    "ai": {
+      "diagnosis_btn": "AI 诊断",
+      "diagnosis_title": "投资诊断报告",
+      "analyzing": "AI 正在分析...",
+      "analyzing_hint": "正在综合多维度数据生成诊断报告",
+      "diagnosis_error": "AI 诊断生成失败",
+      "no_data": "暂无诊断数据",
+      "rating": "综合评级",
+      "highlights": "亮点",
+      "risks": "风险点",
+      "action_advice": "操作建议",
+      "key_focus": "重点关注",
+      "generated_at": "生成时间",
+      "signal_interpretation": "AI 技术面解读",
+      "signal_interpretation_hint": "点击展开查看 AI 对技术指标的解读",
+      "interpretation_error": "AI 解读生成失败",
+      "current_pattern": "当前技术形态"
     },
     "messages": {
       "required_fields": "代码和名称为必填项",
@@ -499,6 +653,81 @@
       "save_error": "保存失败，请重试",
       "reset_done": "已重置"
     }
+  },
+  "news": {
+    "title": "资讯中心",
+    "subtitle": "个性化财经资讯聚合",
+    "categories": {
+      "all": "全部资讯",
+      "flash": "自选股快讯",
+      "fund": "自选基金",
+      "announcement": "公告公示",
+      "research": "研报速递",
+      "hot": "热门资讯",
+      "industry": "行业资讯"
+    },
+    "sidebar": {
+      "bookmarks": "我的收藏"
+    },
+    "filter": {
+      "search": "搜索资讯...",
+      "all": "全部",
+      "flash": "快讯",
+      "announce": "公告",
+      "research": "研报",
+      "hot": "热门"
+    },
+    "card": {
+      "bookmark": "收藏",
+      "unbookmark": "取消收藏",
+      "important": "重要"
+    },
+    "detail": {
+      "select_prompt": "选择一条资讯查看详情",
+      "ai_analysis": "AI 智能分析",
+      "cached": "缓存",
+      "sentiment": {
+        "positive": "积极",
+        "negative": "消极",
+        "neutral": "中性"
+      },
+      "confidence": "置信度",
+      "summary": "一句话摘要",
+      "key_points": "核心要点",
+      "related_stocks": "相关个股",
+      "original_content": "原文内容",
+      "mentioned_stocks": "提及股票",
+      "view_original": "查看原文",
+      "no_content": "暂无详细内容"
+    },
+    "feed": {
+      "no_news": "暂无资讯",
+      "no_news_hint": "当前分类下暂无资讯，请尝试切换其他分类",
+      "load_more": "加载更多",
+      "all_loaded": "已加载全部资讯"
+    },
+    "watchlist": {
+      "has_watchlist": "正在为您聚合 {{stocks}} 只股票、{{funds}} 只基金的资讯",
+      "no_watchlist": "添加自选股获取个性化资讯推送"
+    },
+    "messages": {
+      "bookmarked": "已收藏",
+      "unbookmarked": "已取消收藏",
+      "action_failed": "操作失败"
+    }
+  },
+  "assistant": {
+    "title": "AI 助手",
+    "thinking": "思考中...",
+    "sources": "信息来源",
+    "current_context": "当前上下文",
+    "welcome": "您好！我可以帮助您进行股票/基金分析和获取市场信息。",
+    "try_asking": "试试问我:",
+    "input_placeholder": "输入消息...",
+    "send": "发送",
+    "minimize": "最小化",
+    "close": "关闭",
+    "no_context": "暂无上下文"
   }
 }
 

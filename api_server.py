@@ -25,7 +25,9 @@ from src.analysis.sentiment.dashboard import SentimentDashboard
 from src.analysis.commodities.gold_silver import GoldSilverAnalyst
 from src.analysis.dashboard import DashboardService
 from src.data_sources.akshare_api import search_funds
-from src.storage.db import init_db, get_active_funds, get_all_funds, upsert_fund, delete_fund, get_fund_by_code, get_all_stocks, upsert_stock, delete_stock, get_stock_by_code
+from src.storage.db import init_db, get_active_funds, get_all_funds, upsert_fund, delete_fund, get_fund_by_code, get_all_stocks, upsert_stock, delete_stock, get_stock_by_code, search_stock_basic, get_stock_basic_count, get_stock_basic_last_updated
+from src.services.news_service import news_service
+from src.services.assistant_service import assistant_service
 from src.scheduler.manager import scheduler_manager
 from src.report_gen import save_report, save_stock_report
 # Updated import
@@ -64,6 +66,20 @@ def sanitize_for_json(obj):
 async def lifespan(app: FastAPI):
     # Startup
     init_db()
+
+    # Auto-sync stock basic info if table is empty
+    stock_count = get_stock_basic_count()
+    if stock_count == 0:
+        print("Stock basic table empty, syncing from TuShare...")
+        try:
+            from src.data_sources.tushare_client import sync_stock_basic
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, sync_stock_basic)
+        except Exception as e:
+            print(f"Auto-sync stock basic failed: {e}")
+    else:
+        print(f"Stock basic table has {stock_count} stocks")
+
     print("Starting Scheduler (Background)...")
     # Run scheduler init in a separate thread so it doesn't block startup
     loop = asyncio.get_running_loop()
@@ -301,14 +317,52 @@ async def test_search_connection(current_user: User = Depends(get_current_user))
         searcher = WebSearch()
         # Use asyncio.to_thread for network call
         results = await asyncio.to_thread(searcher.search_news, "Apple stock price", max_results=3)
-        
+
         if not results:
              return {"status": "warning", "message": "Search returned no results (Check API Key limit or network)"}
-             
+
         titles = [r.get("title") for r in results]
         return {"status": "success", "message": "Search Connection Verified", "results": titles}
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+
+# --- Admin Endpoints for Stock Basic Sync ---
+
+@app.post("/api/admin/sync-stock-basic")
+async def sync_stock_basic_endpoint(current_user: User = Depends(get_current_user)):
+    """
+    Manually trigger sync of stock basic info from TuShare.
+    Requires authentication.
+    """
+    try:
+        from src.data_sources.tushare_client import sync_stock_basic
+        loop = asyncio.get_running_loop()
+        count = await loop.run_in_executor(None, sync_stock_basic)
+        return {
+            "status": "success",
+            "synced": count,
+            "message": f"Synced {count} stocks from TuShare"
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e)
+        }
+
+
+@app.get("/api/admin/stock-basic-status")
+async def get_stock_basic_status(current_user: User = Depends(get_current_user)):
+    """
+    Get status of stock basic table.
+    Returns count and last update time.
+    """
+    count = get_stock_basic_count()
+    last_updated = get_stock_basic_last_updated()
+    return {
+        "count": count,
+        "last_updated": last_updated
+    }
 
 @app.post("/api/llm/models")
 async def list_llm_models(request: ModelListRequest, current_user: User = Depends(get_current_user)):
@@ -631,17 +685,23 @@ _INDICES_CACHE = {
 
 @app.get("/api/market/indices")
 def get_market_indices():
+    """
+    Get market indices with TuShare + yFinance hybrid approach.
+
+    Migration Note: Phase 5 - Replaced error-prone ak.index_global_spot_em()
+    """
     import time
     from datetime import datetime
+    from config.settings import DATA_SOURCE_PROVIDER
     global _INDICES_CACHE
-    
+
     now_ts = time.time()
     now_dt = datetime.now()
     current_hm = now_dt.hour * 100 + now_dt.minute
-    
+
     # Active Hours: 08:00 - 15:00 OR 21:30 - 05:00
     # Inactive Hours: 15:00 - 21:30 AND 05:00 - 08:00
-    
+
     is_active_session_1 = 800 <= current_hm < 1500
     is_active_session_2 = (2130 <= current_hm) or (current_hm < 500)
     is_active = is_active_session_1 or is_active_session_2
@@ -649,24 +709,39 @@ def get_market_indices():
     # If inactive and we have data, use it indefinitely
     if not is_active and _INDICES_CACHE["data"]:
         return _INDICES_CACHE["data"]
-    
+
     # Otherwise (Active OR Empty Cache), check standard expiry
     if _INDICES_CACHE["data"] and now_ts < _INDICES_CACHE["expiry"]:
         return _INDICES_CACHE["data"]
 
+    # Try TuShare first
+    if DATA_SOURCE_PROVIDER in ('tushare', 'hybrid'):
+        try:
+            from src.data_sources.data_source_manager import get_market_indices_from_tushare
+            results = get_market_indices_from_tushare()
+
+            if results:
+                data = sanitize_data(results)
+                _INDICES_CACHE["data"] = data
+                _INDICES_CACHE["expiry"] = now_ts + 60  # 60s cache
+                return data
+        except Exception as e:
+            print(f"TuShare indices failed: {e}")
+
+    # Fallback to AkShare
     try:
         import akshare as ak
         indices_df = ak.index_global_spot_em()
-        
+
         target_names = [
             "上证指数", "深证成指", "创业板指",
             "恒生指数", "日经225", "纳斯达克", "标普500"
         ]
-        
+
         # Optimize: Filter dataframe first
         if not indices_df.empty:
             filtered_df = indices_df[indices_df['名称'].isin(target_names)]
-            
+
             # Convert to list of dicts directly
             results = []
             for _, row in filtered_df.iterrows():
@@ -679,14 +754,14 @@ def get_market_indices():
                 })
         else:
             results = []
-        
+
         data = sanitize_data(results)
-        
+
         if data:
             _INDICES_CACHE["data"] = data
             # Cache for 60 seconds during active time
             _INDICES_CACHE["expiry"] = now_ts + 60
-            
+
         return data
     except Exception as e:
         print(f"Error fetching indices via index_global_spot_em: {e}")
@@ -1205,8 +1280,21 @@ async def delete_stock_report(filename: str, current_user: User = Depends(get_cu
 
 @app.get("/api/market/stocks")
 async def search_market_stocks(query: str = ""):
+    """
+    Search stocks from local database (synced from TuShare stock_basic).
+    Returns stocks matching code prefix or name/industry substring.
+    """
+    # First check if we have data in database
+    stock_count = get_stock_basic_count()
+
+    if stock_count > 0:
+        # Use database search
+        results = search_stock_basic(query, limit=50)
+        return results
+
+    # Fallback to old JSON cache method if database is empty
     stocks = []
-    
+
     # Check cache
     if os.path.exists(MARKET_STOCKS_CACHE):
         try:
@@ -1217,12 +1305,12 @@ async def search_market_stocks(query: str = ""):
                     stocks = json.load(f)
         except Exception as e:
             print(f"Stock cache read error: {e}")
-            
+
     if not stocks:
         print("Fetching fresh stock list from AkShare...")
         try:
             import akshare as ak
-            # stock_zh_a_spot_em returns huge dataframe. 
+            # stock_zh_a_spot_em returns huge dataframe.
             # Use stock_info_a_code_name() if available for lighter list
             df = ak.stock_info_a_code_name()
             if not df.empty:
@@ -1235,16 +1323,16 @@ async def search_market_stocks(query: str = ""):
                     json.dump(stocks, f, ensure_ascii=False)
         except Exception as e:
             print(f"Error fetching stock list: {e}")
-            
+
     if not query:
         return stocks[:20]
-        
+
     query = query.lower()
     results = []
     for s in stocks:
         s_code = str(s.get('code', ''))
         s_name = str(s.get('name', ''))
-        
+
         if s_code.startswith(query) or query in s_name.lower():
             results.append(s)
             if len(results) >= 50:
@@ -1290,6 +1378,720 @@ async def get_stock_history_endpoint(code: str):
     except Exception as e:
         print(f"History error: {e}")
         return []
+
+
+# --- Stock Professional Features API ---
+
+from src.data_sources.tushare_client import (
+    get_financial_indicators, get_income_statement, get_balance_sheet, get_cashflow_statement,
+    get_top10_holders, get_shareholder_number,
+    get_margin_detail,
+    get_forecast, get_share_float, get_dividend,
+    get_stock_factors, get_chip_performance,
+    normalize_ts_code
+)
+
+# In-memory cache for stock professional features
+_stock_feature_cache: Dict[str, Dict[str, Any]] = {}
+
+def _get_cached_data(cache_key: str, ttl_minutes: int) -> Optional[Dict]:
+    """Get cached data if not expired."""
+    if cache_key in _stock_feature_cache:
+        cached = _stock_feature_cache[cache_key]
+        if datetime.now() - cached['timestamp'] < timedelta(minutes=ttl_minutes):
+            return cached['data']
+    return None
+
+def _set_cache(cache_key: str, data: Dict):
+    """Set cache with timestamp."""
+    _stock_feature_cache[cache_key] = {
+        'data': data,
+        'timestamp': datetime.now()
+    }
+
+
+@app.get("/api/stocks/{code}/financials")
+async def get_stock_financials(code: str, current_user: User = Depends(get_current_user)):
+    """
+    Get financial health diagnosis data.
+
+    Cache TTL: 1 day (86400s / 1440 min)
+    """
+    cache_key = f"financials:{code}"
+    cached = _get_cached_data(cache_key, 1440)  # 1 day
+    if cached:
+        return cached
+
+    try:
+        result = {
+            "code": code,
+            "indicators": [],
+            "income": [],
+            "balance": [],
+            "cashflow": [],
+            "health_score": None,
+            "summary": {}
+        }
+
+        # Fetch all financial data in parallel using threads
+        loop = asyncio.get_event_loop()
+
+        indicators_task = loop.run_in_executor(None, lambda: get_financial_indicators(code, 8))
+        income_task = loop.run_in_executor(None, lambda: get_income_statement(code, 4))
+        balance_task = loop.run_in_executor(None, lambda: get_balance_sheet(code, 4))
+        cashflow_task = loop.run_in_executor(None, lambda: get_cashflow_statement(code, 4))
+
+        indicators_df, income_df, balance_df, cashflow_df = await asyncio.gather(
+            indicators_task, income_task, balance_task, cashflow_task
+        )
+
+        # Process indicators
+        if indicators_df is not None and not indicators_df.empty:
+            result["indicators"] = sanitize_data(indicators_df.to_dict('records'))
+
+            # Calculate health score based on latest indicators
+            latest = indicators_df.iloc[0]
+            score = 0
+            count = 0
+
+            # ROE scoring (higher is better, >15% is good)
+            if pd.notna(latest.get('roe')):
+                roe = float(latest['roe'])
+                if roe > 20: score += 25
+                elif roe > 15: score += 20
+                elif roe > 10: score += 15
+                elif roe > 5: score += 10
+                else: score += 5
+                count += 1
+
+            # Debt ratio scoring (lower is better, <60% is good)
+            if pd.notna(latest.get('debt_to_assets')):
+                debt = float(latest['debt_to_assets'])
+                if debt < 40: score += 25
+                elif debt < 50: score += 20
+                elif debt < 60: score += 15
+                elif debt < 70: score += 10
+                else: score += 5
+                count += 1
+
+            # Current ratio (>1.5 is good)
+            if pd.notna(latest.get('current_ratio')):
+                cr = float(latest['current_ratio'])
+                if cr > 2: score += 25
+                elif cr > 1.5: score += 20
+                elif cr > 1: score += 15
+                else: score += 10
+                count += 1
+
+            # Gross profit margin (higher is better)
+            if pd.notna(latest.get('grossprofit_margin')):
+                gpm = float(latest['grossprofit_margin'])
+                if gpm > 40: score += 25
+                elif gpm > 30: score += 20
+                elif gpm > 20: score += 15
+                else: score += 10
+                count += 1
+
+            if count > 0:
+                result["health_score"] = round(score / count, 1)
+
+            result["summary"] = {
+                "roe": float(latest.get('roe', 0)) if pd.notna(latest.get('roe')) else None,
+                "netprofit_margin": float(latest.get('netprofit_margin', 0)) if pd.notna(latest.get('netprofit_margin')) else None,
+                "debt_to_assets": float(latest.get('debt_to_assets', 0)) if pd.notna(latest.get('debt_to_assets')) else None,
+                "grossprofit_margin": float(latest.get('grossprofit_margin', 0)) if pd.notna(latest.get('grossprofit_margin')) else None,
+                "current_ratio": float(latest.get('current_ratio', 0)) if pd.notna(latest.get('current_ratio')) else None,
+                "quick_ratio": float(latest.get('quick_ratio', 0)) if pd.notna(latest.get('quick_ratio')) else None,
+                "eps": float(latest.get('eps', 0)) if pd.notna(latest.get('eps')) else None,
+                "bps": float(latest.get('bps', 0)) if pd.notna(latest.get('bps')) else None,
+            }
+
+        if income_df is not None and not income_df.empty:
+            result["income"] = sanitize_data(income_df.to_dict('records'))
+
+        if balance_df is not None and not balance_df.empty:
+            result["balance"] = sanitize_data(balance_df.to_dict('records'))
+
+        if cashflow_df is not None and not cashflow_df.empty:
+            result["cashflow"] = sanitize_data(cashflow_df.to_dict('records'))
+
+        _set_cache(cache_key, result)
+        return result
+
+    except Exception as e:
+        print(f"Error fetching financial data for {code}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/stocks/{code}/shareholders")
+async def get_stock_shareholders(code: str, current_user: User = Depends(get_current_user)):
+    """
+    Get shareholder structure analysis data.
+
+    Cache TTL: 6 hours
+    """
+    cache_key = f"shareholders:{code}"
+    cached = _get_cached_data(cache_key, 360)  # 6 hours
+    if cached:
+        return cached
+
+    try:
+        result = {
+            "code": code,
+            "top10_holders": [],
+            "holder_number_trend": [],
+            "concentration_change": None,
+            "latest_period": None
+        }
+
+        loop = asyncio.get_event_loop()
+
+        holders_task = loop.run_in_executor(None, lambda: get_top10_holders(code, 4))
+        number_task = loop.run_in_executor(None, lambda: get_shareholder_number(code, 12))
+
+        holders_df, number_df = await asyncio.gather(holders_task, number_task)
+
+        if holders_df is not None and not holders_df.empty:
+            # Group by period
+            periods = holders_df['end_date'].unique()
+            grouped_holders = []
+            for period in sorted(periods, reverse=True):
+                period_data = holders_df[holders_df['end_date'] == period].to_dict('records')
+                grouped_holders.append({
+                    "period": period,
+                    "holders": sanitize_data(period_data)
+                })
+            result["top10_holders"] = grouped_holders
+
+            if len(periods) > 0:
+                result["latest_period"] = str(sorted(periods, reverse=True)[0])
+
+        if number_df is not None and not number_df.empty:
+            result["holder_number_trend"] = sanitize_data(number_df.to_dict('records'))
+
+            # Calculate concentration change
+            if len(number_df) >= 2:
+                latest = number_df.iloc[0]
+                previous = number_df.iloc[1]
+                if pd.notna(latest.get('holder_num')) and pd.notna(previous.get('holder_num')):
+                    change = (float(latest['holder_num']) - float(previous['holder_num'])) / float(previous['holder_num']) * 100
+                    result["concentration_change"] = {
+                        "value": round(change, 2),
+                        "trend": "decreasing" if change < 0 else "increasing",  # Fewer holders = more concentrated
+                        "signal": "positive" if change < -5 else ("negative" if change > 5 else "neutral")
+                    }
+
+        _set_cache(cache_key, result)
+        return result
+
+    except Exception as e:
+        print(f"Error fetching shareholder data for {code}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/stocks/{code}/margin")
+async def get_stock_margin(code: str, current_user: User = Depends(get_current_user)):
+    """
+    Get leverage fund monitoring data.
+
+    Cache TTL: 30 minutes
+    """
+    cache_key = f"margin:{code}"
+    cached = _get_cached_data(cache_key, 30)
+    if cached:
+        return cached
+
+    try:
+        result = {
+            "code": code,
+            "margin_data": [],
+            "summary": {},
+            "sentiment": None
+        }
+
+        margin_df = await asyncio.to_thread(get_margin_detail, code, 30)
+
+        if margin_df is not None and not margin_df.empty:
+            result["margin_data"] = sanitize_data(margin_df.to_dict('records'))
+
+            # Calculate summary
+            latest = margin_df.iloc[0]
+            result["summary"] = {
+                "rzye": float(latest.get('rzye', 0)) if pd.notna(latest.get('rzye')) else None,  # 融资余额
+                "rqye": float(latest.get('rqye', 0)) if pd.notna(latest.get('rqye')) else None,  # 融券余额
+                "rzmre": float(latest.get('rzmre', 0)) if pd.notna(latest.get('rzmre')) else None,  # 融资买入额
+                "rqmcl": float(latest.get('rqmcl', 0)) if pd.notna(latest.get('rqmcl')) else None,  # 融券卖出量
+                "trade_date": str(latest.get('trade_date', ''))
+            }
+
+            # Calculate financing/lending ratio and sentiment
+            rzye = result["summary"]["rzye"]
+            rqye = result["summary"]["rqye"]
+            if rzye and rqye and rqye > 0:
+                ratio = rzye / rqye
+                result["sentiment"] = {
+                    "financing_ratio": round(ratio, 2),
+                    "signal": "bullish" if ratio > 100 else ("neutral" if ratio > 10 else "bearish"),
+                    "description": "融资远大于融券，市场看多" if ratio > 100 else ("融资融券相对平衡" if ratio > 10 else "融券相对较多，谨慎")
+                }
+
+            # Calculate trend (compare with 5 days ago)
+            if len(margin_df) >= 5:
+                latest_rzye = float(margin_df.iloc[0].get('rzye', 0)) if pd.notna(margin_df.iloc[0].get('rzye')) else 0
+                old_rzye = float(margin_df.iloc[4].get('rzye', 0)) if pd.notna(margin_df.iloc[4].get('rzye')) else 0
+                if old_rzye > 0:
+                    change = (latest_rzye - old_rzye) / old_rzye * 100
+                    result["summary"]["rzye_5d_change"] = round(change, 2)
+
+        _set_cache(cache_key, result)
+        return result
+
+    except Exception as e:
+        print(f"Error fetching margin data for {code}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/stocks/{code}/events")
+async def get_stock_events(code: str, current_user: User = Depends(get_current_user)):
+    """
+    Get event-driven calendar data.
+
+    Cache TTL: 1 hour
+    """
+    cache_key = f"events:{code}"
+    cached = _get_cached_data(cache_key, 60)
+    if cached:
+        return cached
+
+    try:
+        result = {
+            "code": code,
+            "forecasts": [],
+            "share_unlock": [],
+            "dividends": [],
+            "upcoming_events": []
+        }
+
+        loop = asyncio.get_event_loop()
+
+        forecast_task = loop.run_in_executor(None, lambda: get_forecast(code))
+        unlock_task = loop.run_in_executor(None, lambda: get_share_float(code))
+        dividend_task = loop.run_in_executor(None, lambda: get_dividend(code))
+
+        forecast_df, unlock_df, dividend_df = await asyncio.gather(
+            forecast_task, unlock_task, dividend_task
+        )
+
+        today = datetime.now().strftime('%Y%m%d')
+
+        if forecast_df is not None and not forecast_df.empty:
+            result["forecasts"] = sanitize_data(forecast_df.head(10).to_dict('records'))
+
+            # Add to upcoming events
+            for _, row in forecast_df.head(3).iterrows():
+                if pd.notna(row.get('ann_date')):
+                    result["upcoming_events"].append({
+                        "type": "forecast",
+                        "date": str(row.get('ann_date', '')),
+                        "title": f"业绩预告: {row.get('type', '未知')}",
+                        "detail": f"预计变动: {row.get('p_change_min', 'N/A')}% ~ {row.get('p_change_max', 'N/A')}%",
+                        "sentiment": "positive" if row.get('type', '') in ['预增', '扭亏', '续盈', '略增'] else "negative"
+                    })
+
+        if unlock_df is not None and not unlock_df.empty:
+            result["share_unlock"] = sanitize_data(unlock_df.head(10).to_dict('records'))
+
+            # Add future unlocks to upcoming events
+            for _, row in unlock_df.iterrows():
+                float_date = str(row.get('float_date', ''))
+                if float_date >= today:
+                    result["upcoming_events"].append({
+                        "type": "unlock",
+                        "date": float_date,
+                        "title": "限售解禁",
+                        "detail": f"解禁数量: {row.get('float_share', 'N/A')}万股, 占比: {row.get('float_ratio', 'N/A')}%",
+                        "sentiment": "warning"
+                    })
+
+        if dividend_df is not None and not dividend_df.empty:
+            result["dividends"] = sanitize_data(dividend_df.head(10).to_dict('records'))
+
+            # Add recent/upcoming dividends
+            for _, row in dividend_df.head(3).iterrows():
+                ex_date = str(row.get('ex_date', ''))
+                if ex_date and ex_date >= (datetime.now() - timedelta(days=30)).strftime('%Y%m%d'):
+                    cash_div = row.get('cash_div_tax', 0)
+                    stk_div = row.get('stk_div', 0)
+                    result["upcoming_events"].append({
+                        "type": "dividend",
+                        "date": ex_date,
+                        "title": "分红除权",
+                        "detail": f"每股现金: {cash_div}元" + (f", 每股送股: {stk_div}" if stk_div else ""),
+                        "sentiment": "positive" if cash_div else "neutral"
+                    })
+
+        # Sort upcoming events by date
+        result["upcoming_events"].sort(key=lambda x: x["date"], reverse=True)
+
+        _set_cache(cache_key, result)
+        return result
+
+    except Exception as e:
+        print(f"Error fetching event data for {code}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/stocks/{code}/quant")
+async def get_stock_quant(code: str, current_user: User = Depends(get_current_user)):
+    """
+    Get quantitative signal dashboard data.
+
+    Cache TTL: 15 minutes
+    """
+    cache_key = f"quant:{code}"
+    cached = _get_cached_data(cache_key, 15)
+    if cached:
+        return cached
+
+    try:
+        result = {
+            "code": code,
+            "factors": [],
+            "chip_data": [],
+            "signals": {},
+            "overall_signal": None
+        }
+
+        loop = asyncio.get_event_loop()
+
+        factors_task = loop.run_in_executor(None, lambda: get_stock_factors(code, 60))
+        chip_task = loop.run_in_executor(None, lambda: get_chip_performance(code))
+
+        factors_df, chip_df = await asyncio.gather(factors_task, chip_task)
+
+        signals = {
+            "macd": {"signal": "neutral", "value": None},
+            "kdj": {"signal": "neutral", "value": None},
+            "rsi": {"signal": "neutral", "value": None},
+            "boll": {"signal": "neutral", "value": None}
+        }
+
+        if factors_df is not None and not factors_df.empty:
+            result["factors"] = sanitize_data(factors_df.to_dict('records'))
+
+            latest = factors_df.iloc[0]
+
+            # MACD signal
+            macd = latest.get('macd')
+            macd_dif = latest.get('macd_dif')
+            macd_dea = latest.get('macd_dea')
+            if pd.notna(macd):
+                signals["macd"]["value"] = round(float(macd), 4)
+                if pd.notna(macd_dif) and pd.notna(macd_dea):
+                    if float(macd_dif) > float(macd_dea):
+                        signals["macd"]["signal"] = "bullish"
+                    else:
+                        signals["macd"]["signal"] = "bearish"
+
+            # KDJ signal
+            kdj_k = latest.get('kdj_k')
+            kdj_d = latest.get('kdj_d')
+            kdj_j = latest.get('kdj_j')
+            if pd.notna(kdj_j):
+                signals["kdj"]["value"] = round(float(kdj_j), 2)
+                if float(kdj_j) > 80:
+                    signals["kdj"]["signal"] = "overbought"
+                elif float(kdj_j) < 20:
+                    signals["kdj"]["signal"] = "oversold"
+                elif pd.notna(kdj_k) and pd.notna(kdj_d) and float(kdj_k) > float(kdj_d):
+                    signals["kdj"]["signal"] = "bullish"
+                elif pd.notna(kdj_k) and pd.notna(kdj_d):
+                    signals["kdj"]["signal"] = "bearish"
+
+            # RSI signal
+            rsi_6 = latest.get('rsi_6')
+            if pd.notna(rsi_6):
+                signals["rsi"]["value"] = round(float(rsi_6), 2)
+                if float(rsi_6) > 70:
+                    signals["rsi"]["signal"] = "overbought"
+                elif float(rsi_6) < 30:
+                    signals["rsi"]["signal"] = "oversold"
+                elif float(rsi_6) > 50:
+                    signals["rsi"]["signal"] = "bullish"
+                else:
+                    signals["rsi"]["signal"] = "bearish"
+
+            # BOLL signal
+            close = latest.get('close')
+            boll_upper = latest.get('boll_upper')
+            boll_mid = latest.get('boll_mid')
+            boll_lower = latest.get('boll_lower')
+            if pd.notna(close) and pd.notna(boll_upper) and pd.notna(boll_lower):
+                signals["boll"]["value"] = {
+                    "upper": round(float(boll_upper), 2),
+                    "mid": round(float(boll_mid), 2) if pd.notna(boll_mid) else None,
+                    "lower": round(float(boll_lower), 2),
+                    "close": round(float(close), 2)
+                }
+                if float(close) >= float(boll_upper):
+                    signals["boll"]["signal"] = "overbought"
+                elif float(close) <= float(boll_lower):
+                    signals["boll"]["signal"] = "oversold"
+                elif float(close) > float(boll_mid) if pd.notna(boll_mid) else float(boll_upper + boll_lower) / 2:
+                    signals["boll"]["signal"] = "bullish"
+                else:
+                    signals["boll"]["signal"] = "bearish"
+
+        result["signals"] = signals
+
+        # Calculate overall signal
+        bullish_count = sum(1 for s in signals.values() if s["signal"] in ["bullish", "oversold"])
+        bearish_count = sum(1 for s in signals.values() if s["signal"] in ["bearish", "overbought"])
+
+        if bullish_count >= 3:
+            result["overall_signal"] = {"direction": "bullish", "strength": "strong", "score": bullish_count}
+        elif bullish_count >= 2:
+            result["overall_signal"] = {"direction": "bullish", "strength": "moderate", "score": bullish_count}
+        elif bearish_count >= 3:
+            result["overall_signal"] = {"direction": "bearish", "strength": "strong", "score": -bearish_count}
+        elif bearish_count >= 2:
+            result["overall_signal"] = {"direction": "bearish", "strength": "moderate", "score": -bearish_count}
+        else:
+            result["overall_signal"] = {"direction": "neutral", "strength": "weak", "score": bullish_count - bearish_count}
+
+        # Chip distribution
+        if chip_df is not None and not chip_df.empty:
+            result["chip_data"] = sanitize_data(chip_df.head(10).to_dict('records'))
+
+            latest_chip = chip_df.iloc[0]
+            result["chip_summary"] = {
+                "winner_rate": float(latest_chip.get('winner_rate', 0)) if pd.notna(latest_chip.get('winner_rate')) else None,
+                "cost_5pct": float(latest_chip.get('cost_5pct', 0)) if pd.notna(latest_chip.get('cost_5pct')) else None,
+                "cost_50pct": float(latest_chip.get('cost_50pct', 0)) if pd.notna(latest_chip.get('cost_50pct')) else None,
+                "cost_95pct": float(latest_chip.get('cost_95pct', 0)) if pd.notna(latest_chip.get('cost_95pct')) else None,
+                "weight_avg": float(latest_chip.get('weight_avg', 0)) if pd.notna(latest_chip.get('weight_avg')) else None,
+            }
+
+        _set_cache(cache_key, result)
+        return result
+
+    except Exception as e:
+        print(f"Error fetching quant data for {code}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# --- AI Stock Diagnosis API ---
+
+@app.get("/api/stocks/{code}/ai-diagnosis")
+async def get_stock_ai_diagnosis(code: str, current_user: User = Depends(get_current_user)):
+    """
+    AI One-Click Diagnosis - Generate comprehensive investment diagnosis report.
+
+    Integrates data from:
+    - Financial health
+    - Shareholder structure
+    - Margin/leverage
+    - Events
+    - Quantitative signals
+
+    Cache TTL: 30 minutes
+    """
+    cache_key = f"ai_diagnosis:{code}"
+    cached = _get_cached_data(cache_key, 30)  # 30 minutes
+    if cached:
+        return cached
+
+    try:
+        from src.llm.client import get_llm_client
+        from src.llm.stock_diagnosis_prompt import (
+            STOCK_DIAGNOSIS_SYSTEM_PROMPT,
+            build_diagnosis_prompt
+        )
+        import json
+        import re
+
+        # Get stock basic info
+        stock_info = get_stock_by_code(code)
+        stock_name = stock_info.get("name", code) if stock_info else code
+        industry = stock_info.get("sector", "") if stock_info else ""
+
+        # Get real-time quote for current price
+        quote = get_stock_realtime_quote(code)
+        current_price = None
+        change_pct = None
+        if quote:
+            current_price = quote.get("最新价")
+            change_pct = quote.get("涨跌幅")
+
+        # Fetch all dimension data in parallel
+        loop = asyncio.get_event_loop()
+
+        financials_task = loop.run_in_executor(None, lambda: asyncio.run(get_stock_financials(code, current_user)))
+        shareholders_task = loop.run_in_executor(None, lambda: asyncio.run(get_stock_shareholders(code, current_user)))
+        margin_task = loop.run_in_executor(None, lambda: asyncio.run(get_stock_margin(code, current_user)))
+        events_task = loop.run_in_executor(None, lambda: asyncio.run(get_stock_events(code, current_user)))
+        quant_task = loop.run_in_executor(None, lambda: asyncio.run(get_stock_quant(code, current_user)))
+
+        financials, shareholders, margin, events, quant = await asyncio.gather(
+            financials_task, shareholders_task, margin_task, events_task, quant_task,
+            return_exceptions=True
+        )
+
+        # Handle exceptions - use empty dicts if any API failed
+        if isinstance(financials, Exception):
+            print(f"Financial data fetch failed: {financials}")
+            financials = {}
+        if isinstance(shareholders, Exception):
+            print(f"Shareholders data fetch failed: {shareholders}")
+            shareholders = {}
+        if isinstance(margin, Exception):
+            print(f"Margin data fetch failed: {margin}")
+            margin = {}
+        if isinstance(events, Exception):
+            print(f"Events data fetch failed: {events}")
+            events = {}
+        if isinstance(quant, Exception):
+            print(f"Quant data fetch failed: {quant}")
+            quant = {}
+
+        # Build prompt
+        prompt = build_diagnosis_prompt(
+            stock_code=code,
+            stock_name=stock_name,
+            current_price=current_price,
+            change_pct=change_pct,
+            industry=industry,
+            financials=financials,
+            shareholders=shareholders,
+            margin=margin,
+            events=events,
+            quant=quant
+        )
+
+        # Call LLM
+        llm = get_llm_client()
+        full_prompt = f"{STOCK_DIAGNOSIS_SYSTEM_PROMPT}\n\n{prompt}"
+        response_text = llm.generate_content(full_prompt)
+
+        # Parse JSON response
+        # Try to extract JSON from response
+        diagnosis = None
+        try:
+            # Try direct JSON parse first
+            diagnosis = json.loads(response_text)
+        except json.JSONDecodeError:
+            # Try to find JSON block in response
+            json_match = re.search(r'\{[^{}]*"score"[^{}]*\}', response_text, re.DOTALL)
+            if json_match:
+                try:
+                    diagnosis = json.loads(json_match.group())
+                except json.JSONDecodeError:
+                    pass
+
+        if not diagnosis:
+            # Create default diagnosis if parsing failed
+            diagnosis = {
+                "score": 50,
+                "rating": "中等",
+                "recommendation": "谨慎持有",
+                "highlights": ["数据分析中..."],
+                "risks": ["请稍后重试"],
+                "action_advice": "AI分析暂时无法完成，请稍后重试",
+                "key_focus": "等待AI响应"
+            }
+
+        result = {
+            "code": code,
+            "name": stock_name,
+            "diagnosis": diagnosis,
+            "data_timestamp": datetime.now().isoformat()
+        }
+
+        _set_cache(cache_key, result)
+        return result
+
+    except Exception as e:
+        print(f"Error generating AI diagnosis for {code}: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/stocks/{code}/quant/ai-interpret")
+async def get_quant_ai_interpretation(code: str, current_user: User = Depends(get_current_user)):
+    """
+    AI Technical Signal Interpretation - Convert quantitative signals to actionable advice.
+
+    Cache TTL: 15 minutes
+    """
+    cache_key = f"ai_quant_interpret:{code}"
+    cached = _get_cached_data(cache_key, 15)  # 15 minutes
+    if cached:
+        return cached
+
+    try:
+        from src.llm.client import get_llm_client
+        from src.llm.stock_diagnosis_prompt import build_quant_interpretation_prompt
+        import json
+        import re
+
+        # Get quant data
+        quant_data = await get_stock_quant(code, current_user)
+
+        # Get current price
+        quote = get_stock_realtime_quote(code)
+        current_price = None
+        if quote:
+            current_price = quote.get("最新价")
+
+        # Build prompt
+        prompt = build_quant_interpretation_prompt(
+            stock_code=code,
+            current_price=current_price,
+            quant=quant_data
+        )
+
+        # Call LLM
+        llm = get_llm_client()
+        system_prompt = "你是一位专业的技术分析师，擅长解读各类技术指标并给出通俗易懂的操作建议。请用中文回答。"
+        full_prompt = f"{system_prompt}\n\n{prompt}"
+        response_text = llm.generate_content(full_prompt)
+
+        # Parse JSON response
+        interpretation = None
+        try:
+            interpretation = json.loads(response_text)
+        except json.JSONDecodeError:
+            # Try to find JSON block
+            json_match = re.search(r'\{[^{}]*"pattern"[^{}]*\}', response_text, re.DOTALL)
+            if json_match:
+                try:
+                    interpretation = json.loads(json_match.group())
+                except json.JSONDecodeError:
+                    pass
+
+        if not interpretation:
+            # Create default if parsing failed
+            interpretation = {
+                "pattern": "分析中...",
+                "interpretation": "AI正在分析技术指标，请稍后重试。",
+                "action": "建议等待AI分析完成后再做决策。"
+            }
+
+        result = {
+            "code": code,
+            "interpretation": interpretation,
+            "timestamp": datetime.now().isoformat()
+        }
+
+        _set_cache(cache_key, result)
+        return result
+
+    except Exception as e:
+        print(f"Error generating AI quant interpretation for {code}: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # --- AI Recommendation API ---
@@ -2005,6 +2807,652 @@ async def compare_funds(
         raise
     except Exception as e:
         print(f"Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ====================================================================
+# Widget Data API - Configurable Dashboard
+# ====================================================================
+
+from src.analysis.widget_service import widget_service, WidgetType
+
+
+@app.get("/api/widgets/northbound-flow")
+async def get_widget_northbound_flow(days: int = 5):
+    """Get northbound capital flow data for widget."""
+    try:
+        data = await asyncio.to_thread(widget_service.get_northbound_flow, days)
+        return sanitize_data(data)
+    except Exception as e:
+        print(f"Error fetching northbound flow: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/widgets/industry-flow")
+async def get_widget_industry_flow(limit: int = 10):
+    """Get industry money flow data for widget."""
+    try:
+        data = await asyncio.to_thread(widget_service.get_industry_flow, limit)
+        return sanitize_data(data)
+    except Exception as e:
+        print(f"Error fetching industry flow: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/widgets/sector-performance")
+async def get_widget_sector_performance(limit: int = 10):
+    """Get sector performance data for widget."""
+    try:
+        data = await asyncio.to_thread(widget_service.get_sector_performance, limit)
+        return sanitize_data(data)
+    except Exception as e:
+        print(f"Error fetching sector performance: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/widgets/top-list")
+async def get_widget_top_list(limit: int = 10):
+    """Get dragon tiger list data for widget."""
+    try:
+        data = await asyncio.to_thread(widget_service.get_top_list, limit)
+        return sanitize_data(data)
+    except Exception as e:
+        print(f"Error fetching top list: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/widgets/forex-rates")
+async def get_widget_forex_rates():
+    """Get forex rates data for widget."""
+    try:
+        data = await asyncio.to_thread(widget_service.get_forex_rates)
+        return sanitize_data(data)
+    except Exception as e:
+        print(f"Error fetching forex rates: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/widgets/watchlist")
+async def get_widget_watchlist(current_user: User = Depends(get_current_user)):
+    """Get watchlist quotes for widget."""
+    try:
+        # Get user's stocks
+        stocks = get_all_stocks(user_id=current_user.id)
+        stock_codes = [s['code'] for s in stocks]
+
+        if not stock_codes:
+            return {"stocks": [], "updated_at": datetime.now().isoformat()}
+
+        data = await asyncio.to_thread(widget_service.get_watchlist_quotes, stock_codes)
+        return sanitize_data(data)
+    except Exception as e:
+        print(f"Error fetching watchlist: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/widgets/news")
+async def get_widget_news(limit: int = 20, src: str = 'sina'):
+    """Get news feed for widget."""
+    try:
+        data = await asyncio.to_thread(widget_service.get_news, limit, src)
+        return sanitize_data(data)
+    except Exception as e:
+        print(f"Error fetching news: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/widgets/main-capital-flow")
+async def get_widget_main_capital_flow(limit: int = 10):
+    """Get main capital flow (top stocks and total) for widget."""
+    try:
+        data = await asyncio.to_thread(widget_service.get_main_capital_flow, limit)
+        return sanitize_data(data)
+    except Exception as e:
+        print(f"Error fetching main capital flow: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ====================================================================
+# Dashboard Layout API
+# ====================================================================
+
+from src.storage.db import (
+    get_user_layouts,
+    get_layout_by_id,
+    get_default_layout,
+    save_layout,
+    update_layout,
+    delete_layout,
+    set_default_layout,
+)
+
+
+class LayoutCreate(BaseModel):
+    name: str
+    layout: Dict[str, Any]
+    is_default: bool = False
+
+
+class LayoutUpdate(BaseModel):
+    name: Optional[str] = None
+    layout: Optional[Dict[str, Any]] = None
+    is_default: Optional[bool] = None
+
+
+# Dashboard layout presets
+DASHBOARD_PRESETS = {
+    "trader": {
+        "name": "交易者视图",
+        "name_en": "Trader View",
+        "description": "实时异动、北向资金、龙虎榜、行业资金流",
+        "widgets": [
+            {"id": "abnormal", "type": "abnormal_movements", "position": {"x": 0, "y": 0, "w": 6, "h": 4}},
+            {"id": "northbound", "type": "northbound_flow", "position": {"x": 6, "y": 0, "w": 6, "h": 4}},
+            {"id": "toplist", "type": "top_list", "position": {"x": 0, "y": 4, "w": 8, "h": 4}},
+            {"id": "industry", "type": "industry_flow", "position": {"x": 8, "y": 4, "w": 4, "h": 4}},
+        ]
+    },
+    "investor": {
+        "name": "投资者视图",
+        "name_en": "Investor View",
+        "description": "市场指数、板块涨跌、主力资金、自选股",
+        "widgets": [
+            {"id": "indices", "type": "market_indices", "position": {"x": 0, "y": 0, "w": 12, "h": 2}},
+            {"id": "sectors", "type": "sector_performance", "position": {"x": 0, "y": 2, "w": 6, "h": 4}},
+            {"id": "mainflow", "type": "main_capital_flow", "position": {"x": 6, "y": 2, "w": 6, "h": 4}},
+            {"id": "watchlist", "type": "watchlist", "position": {"x": 0, "y": 6, "w": 12, "h": 4}},
+        ]
+    },
+    "macro": {
+        "name": "宏观视图",
+        "name_en": "Macro View",
+        "description": "市场指数、外汇汇率、黄金宏观、北向资金",
+        "widgets": [
+            {"id": "indices", "type": "market_indices", "position": {"x": 0, "y": 0, "w": 10, "h": 2}},
+            {"id": "gold", "type": "gold_macro", "position": {"x": 10, "y": 0, "w": 2, "h": 2}},
+            {"id": "forex", "type": "forex_rates", "position": {"x": 0, "y": 2, "w": 5, "h": 4}},
+            {"id": "northbound", "type": "northbound_flow", "position": {"x": 5, "y": 2, "w": 7, "h": 4}},
+        ]
+    },
+    "compact": {
+        "name": "精简视图",
+        "name_en": "Compact View",
+        "description": "市场指数、市场情绪、主力资金",
+        "widgets": [
+            {"id": "indices", "type": "market_indices", "position": {"x": 0, "y": 0, "w": 12, "h": 2}},
+            {"id": "sentiment", "type": "market_sentiment", "position": {"x": 0, "y": 2, "w": 6, "h": 3}},
+            {"id": "mainflow", "type": "main_capital_flow", "position": {"x": 6, "y": 2, "w": 6, "h": 3}},
+        ]
+    },
+}
+
+
+@app.get("/api/dashboard/layouts")
+async def get_dashboard_layouts(current_user: User = Depends(get_current_user)):
+    """Get all dashboard layouts for the current user."""
+    try:
+        layouts = get_user_layouts(user_id=current_user.id)
+        return {"layouts": layouts}
+    except Exception as e:
+        print(f"Error fetching layouts: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/dashboard/layouts/count")
+async def get_dashboard_layout_count(current_user: User = Depends(get_current_user)):
+    """Get the count of custom dashboard layouts for the current user."""
+    try:
+        layouts = get_user_layouts(user_id=current_user.id)
+        count = len(layouts) if layouts else 0
+        return {"count": count, "max": 3}
+    except Exception as e:
+        print(f"Error fetching layout count: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/dashboard/layouts/default")
+async def get_default_dashboard_layout(current_user: User = Depends(get_current_user)):
+    """Get the default dashboard layout for the current user."""
+    try:
+        layout = get_default_layout(user_id=current_user.id)
+        if not layout:
+            # Return the default preset if no custom layout
+            return {"layout": None, "preset": "investor"}
+        return {"layout": layout}
+    except Exception as e:
+        print(f"Error fetching default layout: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/dashboard/layouts/{layout_id}")
+async def get_dashboard_layout(layout_id: int, current_user: User = Depends(get_current_user)):
+    """Get a specific dashboard layout."""
+    try:
+        layout = get_layout_by_id(layout_id, user_id=current_user.id)
+        if not layout:
+            raise HTTPException(status_code=404, detail="Layout not found")
+        return layout
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error fetching layout: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/dashboard/layouts")
+async def create_dashboard_layout(
+    layout_data: LayoutCreate,
+    current_user: User = Depends(get_current_user)
+):
+    """Create a new dashboard layout."""
+    try:
+        # Check layout count limit (max 3 custom layouts)
+        existing_layouts = get_user_layouts(user_id=current_user.id)
+        if existing_layouts and len(existing_layouts) >= 3:
+            raise HTTPException(
+                status_code=400,
+                detail="Maximum number of custom layouts (3) reached. Please delete an existing layout first."
+            )
+
+        layout_id = save_layout(
+            user_id=current_user.id,
+            name=layout_data.name,
+            layout=layout_data.layout,
+            is_default=layout_data.is_default
+        )
+        return {"id": layout_id, "message": "Layout created successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error creating layout: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.put("/api/dashboard/layouts/{layout_id}")
+async def update_dashboard_layout(
+    layout_id: int,
+    layout_data: LayoutUpdate,
+    current_user: User = Depends(get_current_user)
+):
+    """Update a dashboard layout."""
+    try:
+        updates = {}
+        if layout_data.name is not None:
+            updates['name'] = layout_data.name
+        if layout_data.layout is not None:
+            updates['layout'] = layout_data.layout
+        if layout_data.is_default is not None:
+            updates['is_default'] = layout_data.is_default
+
+        success = update_layout(layout_id, user_id=current_user.id, updates=updates)
+        if not success:
+            raise HTTPException(status_code=404, detail="Layout not found")
+        return {"message": "Layout updated successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error updating layout: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/dashboard/layouts/{layout_id}")
+async def delete_dashboard_layout(layout_id: int, current_user: User = Depends(get_current_user)):
+    """Delete a dashboard layout."""
+    try:
+        success = delete_layout(layout_id, user_id=current_user.id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Layout not found")
+        return {"message": "Layout deleted successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error deleting layout: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/dashboard/layouts/{layout_id}/set-default")
+async def set_default_dashboard_layout(layout_id: int, current_user: User = Depends(get_current_user)):
+    """Set a layout as the default."""
+    try:
+        success = set_default_layout(user_id=current_user.id, layout_id=layout_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Layout not found")
+        return {"message": "Default layout set successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error setting default layout: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/dashboard/presets")
+async def get_dashboard_presets():
+    """Get predefined dashboard layout presets."""
+    return {"presets": DASHBOARD_PRESETS}
+
+
+# ====================================================================
+# News Center API
+# ====================================================================
+
+class NewsBookmarkRequest(BaseModel):
+    """Request model for bookmarking news"""
+    news_title: Optional[str] = None
+    news_source: Optional[str] = None
+    news_url: Optional[str] = None
+    news_category: Optional[str] = None
+    bookmarked: Optional[bool] = None  # If None, toggle
+
+
+class NewsReadRequest(BaseModel):
+    """Request model for marking news as read"""
+    news_title: Optional[str] = None
+    news_source: Optional[str] = None
+    news_url: Optional[str] = None
+    news_category: Optional[str] = None
+
+
+@app.get("/api/news/feed")
+async def get_news_feed(
+    category: str = "all",
+    page: int = 1,
+    page_size: int = 20,
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Get personalized news feed.
+
+    Categories: all, flash (自选股快讯), fund (自选基金), announcement (公告),
+                research (研报), hot (热门资讯)
+    """
+    try:
+        data = await asyncio.to_thread(
+            news_service.get_personalized_feed,
+            user_id=current_user.id,
+            category=category,
+            page=page,
+            page_size=page_size
+        )
+        return sanitize_for_json(data)
+    except Exception as e:
+        print(f"Error fetching news feed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/news/{news_id}")
+async def get_news_detail(
+    news_id: str,
+    title: str = "",
+    content: str = "",
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Get news detail with AI analysis.
+
+    Pass title and content as query params for analysis if not cached.
+    """
+    try:
+        # Mark as read
+        await asyncio.to_thread(
+            news_service.mark_read,
+            user_id=current_user.id,
+            news_id=news_id,
+            news_title=title
+        )
+
+        # Get AI analysis
+        analysis = await asyncio.to_thread(
+            news_service.analyze_news,
+            news_id=news_id,
+            title=title,
+            content=content
+        )
+
+        return sanitize_for_json({
+            "news_id": news_id,
+            "analysis": analysis,
+            "is_read": True,
+        })
+    except Exception as e:
+        print(f"Error fetching news detail: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/news/{news_id}/bookmark")
+async def toggle_news_bookmark(
+    news_id: str,
+    request: NewsBookmarkRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """Toggle or set bookmark status for a news item."""
+    try:
+        if request.bookmarked is not None:
+            # Set explicit bookmark state
+            await asyncio.to_thread(
+                news_service.set_bookmark,
+                user_id=current_user.id,
+                news_id=news_id,
+                bookmarked=request.bookmarked,
+                news_title=request.news_title,
+                news_source=request.news_source,
+                news_url=request.news_url,
+                news_category=request.news_category
+            )
+            return {"bookmarked": request.bookmarked}
+        else:
+            # Toggle
+            new_state = await asyncio.to_thread(
+                news_service.toggle_bookmark,
+                user_id=current_user.id,
+                news_id=news_id,
+                news_title=request.news_title,
+                news_source=request.news_source,
+                news_url=request.news_url,
+                news_category=request.news_category
+            )
+            return {"bookmarked": new_state}
+    except Exception as e:
+        print(f"Error toggling bookmark: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/news/{news_id}/read")
+async def mark_news_read(
+    news_id: str,
+    request: NewsReadRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """Mark a news item as read."""
+    try:
+        await asyncio.to_thread(
+            news_service.mark_read,
+            user_id=current_user.id,
+            news_id=news_id,
+            news_title=request.news_title,
+            news_source=request.news_source,
+            news_url=request.news_url,
+            news_category=request.news_category
+        )
+        return {"success": True, "is_read": True}
+    except Exception as e:
+        print(f"Error marking news as read: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/news/bookmarks")
+async def get_news_bookmarks(
+    limit: int = 50,
+    offset: int = 0,
+    current_user: User = Depends(get_current_user)
+):
+    """Get user's bookmarked news."""
+    try:
+        bookmarks = await asyncio.to_thread(
+            news_service.get_bookmarks,
+            user_id=current_user.id,
+            limit=limit,
+            offset=offset
+        )
+        return {"bookmarks": bookmarks, "total": len(bookmarks)}
+    except Exception as e:
+        print(f"Error fetching bookmarks: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/news/watchlist-summary")
+async def get_news_watchlist_summary(current_user: User = Depends(get_current_user)):
+    """Get a summary of news related to user's watchlist."""
+    try:
+        summary = await asyncio.to_thread(
+            news_service.get_watchlist_news_summary,
+            user_id=current_user.id
+        )
+        return sanitize_for_json(summary)
+    except Exception as e:
+        print(f"Error fetching watchlist summary: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/news/announcements")
+async def get_news_announcements(
+    stock_code: Optional[str] = None,
+    limit: int = 20,
+    current_user: User = Depends(get_current_user)
+):
+    """Get company announcements."""
+    try:
+        announcements = await asyncio.to_thread(
+            news_service.get_announcements,
+            stock_code=stock_code,
+            limit=limit
+        )
+        return {"announcements": announcements, "total": len(announcements)}
+    except Exception as e:
+        print(f"Error fetching announcements: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/news/research")
+async def search_news_research(
+    query: str,
+    limit: int = 10,
+    current_user: User = Depends(get_current_user)
+):
+    """Search for research reports via Tavily."""
+    try:
+        results = await asyncio.to_thread(
+            news_service.search_research_reports,
+            query=query,
+            limit=limit
+        )
+        return {"results": results, "total": len(results)}
+    except Exception as e:
+        print(f"Error searching research: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/news/hot")
+async def get_hot_news(limit: int = 30):
+    """Get hot/trending news (no auth required for public display)."""
+    try:
+        news = await asyncio.to_thread(
+            news_service.get_hot_news,
+            limit=limit
+        )
+        return {"news": news, "total": len(news)}
+    except Exception as e:
+        print(f"Error fetching hot news: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ====================================================================
+# AI Assistant API
+# ====================================================================
+
+class AssistantChatRequest(BaseModel):
+    """Request model for assistant chat."""
+    message: str
+    context: Optional[Dict[str, Any]] = None
+    history: Optional[List[Dict[str, str]]] = None
+
+
+class AssistantSource(BaseModel):
+    """Source item in assistant response."""
+    title: str
+    url: Optional[str] = None
+    source: Optional[str] = None
+    type: Optional[str] = None
+
+
+class AssistantChatResponse(BaseModel):
+    """Response model for assistant chat."""
+    response: str
+    sources: List[AssistantSource] = []
+    context_used: Dict[str, Any] = {}
+    suggested_questions: Optional[List[str]] = None
+
+
+@app.post("/api/assistant/chat", response_model=AssistantChatResponse)
+async def assistant_chat(
+    request: AssistantChatRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Chat with AI assistant.
+
+    The assistant is context-aware and can:
+    - Understand current page context (stocks, funds, news)
+    - Search for relevant news and information
+    - Provide RAG-enhanced responses
+    """
+    try:
+        context = request.context or {}
+        history = request.history or []
+
+        # Call assistant service
+        result = await asyncio.to_thread(
+            assistant_service.chat,
+            message=request.message,
+            context=context,
+            history=history,
+            user_id=current_user.id
+        )
+
+        # Get suggested questions for follow-up
+        suggestions = assistant_service.get_suggested_questions(context)
+
+        return AssistantChatResponse(
+            response=result.get("response", ""),
+            sources=[AssistantSource(**s) for s in result.get("sources", [])],
+            context_used=result.get("context_used", {}),
+            suggested_questions=suggestions
+        )
+    except Exception as e:
+        print(f"Assistant chat error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/assistant/suggestions")
+async def get_assistant_suggestions(
+    page: Optional[str] = None,
+    stock_code: Optional[str] = None,
+    stock_name: Optional[str] = None,
+    fund_code: Optional[str] = None,
+    fund_name: Optional[str] = None,
+    current_user: User = Depends(get_current_user)
+):
+    """Get suggested questions based on current context."""
+    try:
+        context = {"page": page or "dashboard"}
+        if stock_code and stock_name:
+            context["stock"] = {"code": stock_code, "name": stock_name}
+        if fund_code and fund_name:
+            context["fund"] = {"code": fund_code, "name": fund_name}
+
+        suggestions = assistant_service.get_suggested_questions(context)
+        return {"suggestions": suggestions}
+    except Exception as e:
+        print(f"Error getting suggestions: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

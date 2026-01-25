@@ -32,6 +32,8 @@
       "stocks_sub": "Equity Watchlist",
       "recommendations": "AI Picks",
       "recommendations_sub": "Smart recommendations",
+      "news": "News Center",
+      "news_sub": "Personalized news feed",
       "sentiment": "Sentiment",
       "sentiment_sub": "Market vibe analysis",
       "intelligence": "Intelligence",
@@ -58,6 +60,47 @@
   },
   "dashboard": {
     "title": "Market Overview",
+    "edit_mode": "Edit Mode",
+    "save_layout": "Save Layout",
+    "cancel_edit": "Cancel",
+    "add_widget": "Add Widget",
+    "reset_layout": "Reset",
+    "layout_saved": "Layout saved successfully",
+    "layout_save_error": "Failed to save layout",
+    "presets": {
+      "title": "Layout Presets",
+      "trader": "Trader View",
+      "investor": "Investor View",
+      "macro": "Macro View",
+      "compact": "Compact View"
+    },
+    "widgets": {
+      "market_indices": "Market Indices",
+      "northbound_flow": "Northbound Flow",
+      "industry_flow": "Industry Flow",
+      "sector_performance": "Sector Performance",
+      "top_list": "Dragon Tiger List",
+      "forex_rates": "Forex Rates",
+      "market_sentiment": "Market Sentiment",
+      "gold_macro": "Gold & Macro",
+      "abnormal_movements": "Abnormal Movements",
+      "main_capital_flow": "Main Capital Flow",
+      "system_stats": "System Stats",
+      "watchlist": "Watchlist",
+      "news": "News"
+    },
+    "widget_picker": {
+      "title": "Add Widget",
+      "search": "Search widgets...",
+      "categories": {
+        "market": "Market",
+        "capital": "Capital Flow",
+        "macro": "Macro",
+        "signals": "Signals",
+        "personal": "Personal"
+      },
+      "points_required": "Requires {{points}} TuShare points"
+    },
     "macro": {
       "system_reports": "System Reports",
       "files": "Files",
@@ -202,6 +245,117 @@
       "pe": "PE",
       "pb": "PB",
       "close": "Close"
+    },
+    "tabs": {
+      "overview": "Overview",
+      "financial": "Financial",
+      "shareholder": "Shareholders",
+      "margin": "Leverage",
+      "events": "Events",
+      "quant": "Quant"
+    },
+    "professional": {
+      "load_error": "Failed to load data",
+      "no_data": "No data available"
+    },
+    "financial": {
+      "health_score": "Financial Health Score",
+      "health_excellent": "Excellent",
+      "health_good": "Good",
+      "health_fair": "Fair",
+      "health_poor": "Poor",
+      "key_metrics": "Key Financial Metrics",
+      "net_margin": "Net Margin",
+      "gross_margin": "Gross Margin",
+      "debt_ratio": "Debt Ratio",
+      "current_ratio": "Current Ratio",
+      "roe_trend": "ROE Trend (8 Quarters)",
+      "profitability": "Profitability by Quarter",
+      "yoy_growth": "YoY Growth"
+    },
+    "shareholder": {
+      "concentration": "Shareholder Concentration",
+      "concentrating": "Concentrating",
+      "dispersing": "Dispersing",
+      "concentration_tip_positive": "Decreasing holder count indicates chips concentrating, potentially positive",
+      "concentration_tip_negative": "Increasing holder count indicates chips dispersing, caution advised",
+      "holder_trend": "Shareholder Count Trend",
+      "top10": "Top 10 Shareholders",
+      "holder_name": "Holder Name",
+      "hold_amount": "Shares",
+      "hold_ratio": "Ratio",
+      "unit_yi": "B",
+      "unit_wan": "M"
+    },
+    "margin": {
+      "leverage_sentiment": "Leverage Sentiment",
+      "bullish": "Bullish",
+      "bearish": "Bearish",
+      "neutral": "Neutral",
+      "balance_summary": "Margin Balance Summary",
+      "financing_balance": "Financing Balance",
+      "lending_balance": "Lending Balance",
+      "financing_buy": "Financing Buy",
+      "lending_sell": "Lending Sell",
+      "trend_30d": "30-Day Trend",
+      "last_update": "Last Updated",
+      "5d": "5D",
+      "unit_yi": "B",
+      "unit_wan": "M"
+    },
+    "events": {
+      "tab_upcoming": "Upcoming",
+      "tab_forecast": "Forecast",
+      "tab_unlock": "Unlock",
+      "tab_dividend": "Dividend",
+      "no_upcoming": "No upcoming events",
+      "no_forecast": "No earnings forecast",
+      "no_unlock": "No share unlock schedule",
+      "no_dividend": "No dividend records",
+      "announced": "Announced",
+      "upcoming": "Upcoming",
+      "unknown": "Unknown",
+      "fiscal_year": "FY",
+      "yuan_per_share": "yuan/share",
+      "stock_div": "Stock Div",
+      "ex_date": "Ex-Date",
+      "unit_wan": "M shares"
+    },
+    "quant": {
+      "overall_signal": "Overall Signal",
+      "bullish": "Bullish",
+      "bearish": "Bearish",
+      "neutral": "Neutral",
+      "overbought": "Overbought",
+      "oversold": "Oversold",
+      "strength": "Signal Strength",
+      "strength_strong": "Strong",
+      "strength_moderate": "Moderate",
+      "strength_weak": "Weak",
+      "tech_indicators": "Technical Indicators",
+      "macd_histogram": "MACD Histogram (20D)",
+      "chip_distribution": "Chip Distribution",
+      "winner_rate": "Winner Rate",
+      "avg_cost": "Avg Cost",
+      "cost": "Cost"
+    },
+    "ai": {
+      "diagnosis_btn": "AI Diagnosis",
+      "diagnosis_title": "Investment Diagnosis Report",
+      "analyzing": "AI Analyzing...",
+      "analyzing_hint": "Generating comprehensive multi-dimensional diagnosis",
+      "diagnosis_error": "AI diagnosis generation failed",
+      "no_data": "No diagnosis data available",
+      "rating": "Overall Rating",
+      "highlights": "Highlights",
+      "risks": "Risk Factors",
+      "action_advice": "Action Advice",
+      "key_focus": "Key Focus",
+      "generated_at": "Generated at",
+      "signal_interpretation": "AI Technical Analysis",
+      "signal_interpretation_hint": "Click to expand AI interpretation of technical indicators",
+      "interpretation_error": "AI interpretation generation failed",
+      "current_pattern": "Current Pattern"
     },
     "messages": {
       "required_fields": "Code and Name are required",
@@ -499,6 +653,81 @@
       "save_error": "Save failed, please retry",
       "reset_done": "Reset complete"
     }
+  },
+  "news": {
+    "title": "News Center",
+    "subtitle": "Personalized Financial News",
+    "categories": {
+      "all": "All News",
+      "flash": "Stock Flash",
+      "fund": "Fund News",
+      "announcement": "Announcements",
+      "research": "Research",
+      "hot": "Hot News",
+      "industry": "Industry News"
+    },
+    "sidebar": {
+      "bookmarks": "Bookmarks"
+    },
+    "filter": {
+      "search": "Search news...",
+      "all": "All",
+      "flash": "Flash",
+      "announce": "Announce",
+      "research": "Research",
+      "hot": "Hot"
+    },
+    "card": {
+      "bookmark": "Bookmark",
+      "unbookmark": "Remove bookmark",
+      "important": "Important"
+    },
+    "detail": {
+      "select_prompt": "Select a news item to view details",
+      "ai_analysis": "AI Analysis",
+      "cached": "Cached",
+      "sentiment": {
+        "positive": "Positive",
+        "negative": "Negative",
+        "neutral": "Neutral"
+      },
+      "confidence": "Confidence",
+      "summary": "Summary",
+      "key_points": "Key Points",
+      "related_stocks": "Related Stocks",
+      "original_content": "Original Content",
+      "mentioned_stocks": "Mentioned Stocks",
+      "view_original": "View Original",
+      "no_content": "No content available"
+    },
+    "feed": {
+      "no_news": "No news available",
+      "no_news_hint": "No news in this category. Try switching to another category.",
+      "load_more": "Load More",
+      "all_loaded": "All news loaded"
+    },
+    "watchlist": {
+      "has_watchlist": "Aggregating news for {{stocks}} stocks and {{funds}} funds",
+      "no_watchlist": "Add stocks to your watchlist for personalized news"
+    },
+    "messages": {
+      "bookmarked": "Bookmarked",
+      "unbookmarked": "Bookmark removed",
+      "action_failed": "Action failed"
+    }
+  },
+  "assistant": {
+    "title": "AI Assistant",
+    "thinking": "Thinking...",
+    "sources": "Sources",
+    "current_context": "Context",
+    "welcome": "Hello! I can help you with stock/fund analysis and market information.",
+    "try_asking": "Try asking:",
+    "input_placeholder": "Type a message...",
+    "send": "Send",
+    "minimize": "Minimize",
+    "close": "Close",
+    "no_context": "No specific context"
   }
 }
 

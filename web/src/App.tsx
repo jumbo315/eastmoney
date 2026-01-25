@@ -12,11 +12,23 @@ import SettingsPage from './pages/Settings';
 import LoginPage from './pages/Login';
 import RecommendationsPage from './pages/Recommendations';
 import DocumentationPage from './pages/Documentation';
+import NewsPage from './pages/News';
+import { AppContextProvider } from './contexts/AppContext';
+import { FloatingAssistant } from './components/assistant';
 
-// Auth Guard
+// Auth Guard with AppContext and FloatingAssistant
 const PrivateRoute = () => {
     const token = localStorage.getItem('token');
-    return token ? <Outlet /> : <Navigate to="/login" replace />;
+    if (!token) {
+        return <Navigate to="/login" replace />;
+    }
+
+    return (
+        <AppContextProvider>
+            <Outlet />
+            <FloatingAssistant />
+        </AppContextProvider>
+    );
 };
 
 function App() {
@@ -37,6 +49,7 @@ function App() {
                 <Route path="funds" element={<FundsPage />} />
                 <Route path="stocks" element={<StocksPage />} />
                 <Route path="recommendations" element={<RecommendationsPage />} />
+                <Route path="news" element={<NewsPage />} />
                 <Route path="sentiment" element={<SentimentPage />} />
                 <Route path="reports" element={<ReportsPage />} />
                 <Route path="commodities" element={<CommoditiesPage />} />

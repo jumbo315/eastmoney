@@ -254,39 +254,59 @@ class DashboardService:
         return result
 
     def get_top_holdings_changes(self, force_refresh: bool = False) -> List[Dict]:
-        """Section 5: Top Capital Flow Stocks"""
+        """
+        Section 5: Top Capital Flow Stocks
+
+        Migration Note: Phase 5 - Replaced error-prone ak.stock_individual_fund_flow_rank()
+        with TuShare pro.top_list() API
+        """
         cache_key = "top_flow"
         ignore_expiry = not self._is_china_market_open()
-        
+
         if not force_refresh:
             cached = self._get_cached_data(cache_key, ignore_expiry=ignore_expiry)
             if cached: return cached
-        
+
         stocks = []
+
+        # Try TuShare first (if configured)
         try:
-            # Main capital flow rank
-            df = ak.stock_individual_fund_flow_rank(indicator="今日")
-            if not df.empty:
-                # Top 10 inflow
-                for _, row in df.head(10).iterrows():
-                    net_buy_val = row.get('今日主力净流入-净额', 0)
-                    try:
-                        if str(net_buy_val).strip() == '-':
-                             net_buy_float = 0.0
-                        else:
-                             net_buy_float = float(net_buy_val)
-                    except (ValueError, TypeError):
-                        net_buy_float = 0.0
-                        
-                    stocks.append({
-                        "code": str(row.get('代码')),
-                        "name": row.get('名称'),
-                        "net_buy": round(net_buy_float / 100000000, 2), # Billions? usually units vary
-                        "change_pct": row.get('今日涨跌幅')
-                    })
+            from config.settings import DATA_SOURCE_PROVIDER
+            if DATA_SOURCE_PROVIDER in ('tushare', 'hybrid'):
+                from src.data_sources.data_source_manager import get_top_money_flow_from_tushare
+                stocks = get_top_money_flow_from_tushare(limit=10)
+                if stocks:
+                    self._set_cached_data(cache_key, stocks)
+                    return stocks
         except Exception as e:
-            print(f"Error flow: {e}")
-            
+            print(f"TuShare top flow failed: {e}")
+
+        # Fallback to AkShare if TuShare failed or returned empty
+        if not stocks:
+            try:
+                # Main capital flow rank
+                df = ak.stock_individual_fund_flow_rank(indicator="今日")
+                if not df.empty:
+                    # Top 10 inflow
+                    for _, row in df.head(10).iterrows():
+                        net_buy_val = row.get('今日主力净流入-净额', 0)
+                        try:
+                            if str(net_buy_val).strip() == '-':
+                                 net_buy_float = 0.0
+                            else:
+                                 net_buy_float = float(net_buy_val)
+                        except (ValueError, TypeError):
+                            net_buy_float = 0.0
+
+                        stocks.append({
+                            "code": str(row.get('代码')),
+                            "name": row.get('名称'),
+                            "net_buy": round(net_buy_float / 100000000, 2), # Billions
+                            "change_pct": row.get('今日涨跌幅')
+                        })
+            except Exception as e:
+                print(f"AkShare flow failed: {e}")
+
         self._set_cached_data(cache_key, stocks)
         return stocks
 

@@ -115,6 +115,86 @@ def init_db():
         )
     ''')
 
+    # 8. Create Dashboard Layouts Table
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS dashboard_layouts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER REFERENCES users(id),
+            name TEXT NOT NULL,
+            layout_json TEXT NOT NULL,
+            is_default BOOLEAN DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(user_id, name)
+        )
+    ''')
+
+    # 9. Create User News Status Table (bookmarks, read status)
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS user_news_status (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL REFERENCES users(id),
+            news_hash TEXT NOT NULL,
+            news_title TEXT,
+            news_source TEXT,
+            news_url TEXT,
+            news_category TEXT,
+            is_read BOOLEAN DEFAULT 0,
+            is_bookmarked BOOLEAN DEFAULT 0,
+            read_at TIMESTAMP,
+            bookmarked_at TIMESTAMP,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(user_id, news_hash)
+        )
+    ''')
+
+    # 10. Create News Cache Table
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS news_cache (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cache_key TEXT UNIQUE NOT NULL,
+            cache_data TEXT NOT NULL,
+            source TEXT,
+            expires_at TIMESTAMP NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
+    # 11. Create News Analysis Cache Table (AI sentiment/summary)
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS news_analysis_cache (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            news_hash TEXT UNIQUE NOT NULL,
+            sentiment TEXT,
+            sentiment_score REAL,
+            summary TEXT,
+            key_points TEXT,
+            related_stocks TEXT,
+            analyzed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
+    # 12. Create Stock Basic Table (TuShare stock_basic cache)
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS stock_basic (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts_code TEXT UNIQUE NOT NULL,
+            symbol TEXT NOT NULL,
+            name TEXT NOT NULL,
+            area TEXT,
+            industry TEXT,
+            market TEXT,
+            list_date TEXT,
+            list_status TEXT DEFAULT 'L',
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
+    # Create indexes for stock_basic search
+    c.execute('CREATE INDEX IF NOT EXISTS idx_stock_basic_symbol ON stock_basic(symbol)')
+    c.execute('CREATE INDEX IF NOT EXISTS idx_stock_basic_name ON stock_basic(name)')
+    c.execute('CREATE INDEX IF NOT EXISTS idx_stock_basic_industry ON stock_basic(industry)')
+
     # 3. Migration: Add user_id to funds if not exists
     try:
         c.execute('ALTER TABLE funds ADD COLUMN user_id INTEGER REFERENCES users(id)')
@@ -644,3 +724,597 @@ def delete_user_preferences(user_id: int):
     conn.execute('DELETE FROM user_investment_preferences WHERE user_id = ?', (user_id,))
     conn.commit()
     conn.close()
+
+
+# --- Dashboard Layout Operations ---
+
+def get_user_layouts(user_id: int) -> List[Dict]:
+    """Get all dashboard layouts for a user."""
+    conn = get_db_connection()
+    rows = conn.execute(
+        'SELECT * FROM dashboard_layouts WHERE user_id = ? ORDER BY is_default DESC, updated_at DESC',
+        (user_id,)
+    ).fetchall()
+    conn.close()
+
+    results = []
+    for row in rows:
+        d = dict(row)
+        if d.get('layout_json'):
+            try:
+                d['layout'] = json.loads(d['layout_json'])
+            except:
+                d['layout'] = {}
+        results.append(d)
+
+    return results
+
+
+def get_layout_by_id(layout_id: int, user_id: int = None) -> Optional[Dict]:
+    """Get a specific dashboard layout by ID."""
+    conn = get_db_connection()
+    sql = 'SELECT * FROM dashboard_layouts WHERE id = ?'
+    params = [layout_id]
+
+    if user_id:
+        sql += ' AND user_id = ?'
+        params.append(user_id)
+
+    row = conn.execute(sql, tuple(params)).fetchone()
+    conn.close()
+
+    if not row:
+        return None
+
+    result = dict(row)
+    if result.get('layout_json'):
+        try:
+            result['layout'] = json.loads(result['layout_json'])
+        except:
+            result['layout'] = {}
+
+    return result
+
+
+def get_default_layout(user_id: int) -> Optional[Dict]:
+    """Get the default dashboard layout for a user."""
+    conn = get_db_connection()
+    row = conn.execute(
+        'SELECT * FROM dashboard_layouts WHERE user_id = ? AND is_default = 1',
+        (user_id,)
+    ).fetchone()
+    conn.close()
+
+    if not row:
+        return None
+
+    result = dict(row)
+    if result.get('layout_json'):
+        try:
+            result['layout'] = json.loads(result['layout_json'])
+        except:
+            result['layout'] = {}
+
+    return result
+
+
+def save_layout(user_id: int, name: str, layout: Dict, is_default: bool = False) -> int:
+    """Save or update a dashboard layout."""
+    conn = get_db_connection()
+    c = conn.cursor()
+
+    layout_json = json.dumps(layout, ensure_ascii=False)
+
+    # Check if exists
+    exists = c.execute(
+        'SELECT id FROM dashboard_layouts WHERE user_id = ? AND name = ?',
+        (user_id, name)
+    ).fetchone()
+
+    if exists:
+        c.execute('''
+            UPDATE dashboard_layouts
+            SET layout_json = ?, is_default = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE user_id = ? AND name = ?
+        ''', (layout_json, is_default, user_id, name))
+        layout_id = exists[0]
+    else:
+        c.execute('''
+            INSERT INTO dashboard_layouts (user_id, name, layout_json, is_default)
+            VALUES (?, ?, ?, ?)
+        ''', (user_id, name, layout_json, is_default))
+        layout_id = c.lastrowid
+
+    # If setting as default, unset other defaults
+    if is_default:
+        c.execute('''
+            UPDATE dashboard_layouts
+            SET is_default = 0
+            WHERE user_id = ? AND id != ?
+        ''', (user_id, layout_id))
+
+    conn.commit()
+    conn.close()
+    return layout_id
+
+
+def update_layout(layout_id: int, user_id: int, updates: Dict) -> bool:
+    """Update a dashboard layout."""
+    conn = get_db_connection()
+    c = conn.cursor()
+
+    # Verify ownership
+    exists = c.execute(
+        'SELECT id FROM dashboard_layouts WHERE id = ? AND user_id = ?',
+        (layout_id, user_id)
+    ).fetchone()
+
+    if not exists:
+        conn.close()
+        return False
+
+    set_clauses = []
+    params = []
+
+    if 'name' in updates:
+        set_clauses.append('name = ?')
+        params.append(updates['name'])
+
+    if 'layout' in updates:
+        set_clauses.append('layout_json = ?')
+        params.append(json.dumps(updates['layout'], ensure_ascii=False))
+
+    if 'is_default' in updates:
+        set_clauses.append('is_default = ?')
+        params.append(updates['is_default'])
+
+        # If setting as default, unset other defaults
+        if updates['is_default']:
+            c.execute('''
+                UPDATE dashboard_layouts
+                SET is_default = 0
+                WHERE user_id = ? AND id != ?
+            ''', (user_id, layout_id))
+
+    if set_clauses:
+        set_clauses.append('updated_at = CURRENT_TIMESTAMP')
+        params.append(layout_id)
+        params.append(user_id)
+
+        sql = f"UPDATE dashboard_layouts SET {', '.join(set_clauses)} WHERE id = ? AND user_id = ?"
+        c.execute(sql, tuple(params))
+
+    conn.commit()
+    conn.close()
+    return True
+
+
+def delete_layout(layout_id: int, user_id: int) -> bool:
+    """Delete a dashboard layout."""
+    conn = get_db_connection()
+    c = conn.cursor()
+
+    # Verify ownership
+    exists = c.execute(
+        'SELECT id FROM dashboard_layouts WHERE id = ? AND user_id = ?',
+        (layout_id, user_id)
+    ).fetchone()
+
+    if not exists:
+        conn.close()
+        return False
+
+    c.execute('DELETE FROM dashboard_layouts WHERE id = ? AND user_id = ?', (layout_id, user_id))
+    conn.commit()
+    conn.close()
+    return True
+
+
+def set_default_layout(user_id: int, layout_id: int) -> bool:
+    """Set a layout as the default for a user."""
+    conn = get_db_connection()
+    c = conn.cursor()
+
+    # Verify ownership
+    exists = c.execute(
+        'SELECT id FROM dashboard_layouts WHERE id = ? AND user_id = ?',
+        (layout_id, user_id)
+    ).fetchone()
+
+    if not exists:
+        conn.close()
+        return False
+
+    # Unset all defaults for this user
+    c.execute('UPDATE dashboard_layouts SET is_default = 0 WHERE user_id = ?', (user_id,))
+
+    # Set the new default
+    c.execute('UPDATE dashboard_layouts SET is_default = 1 WHERE id = ?', (layout_id,))
+
+    conn.commit()
+    conn.close()
+    return True
+
+
+# --- News Status Operations ---
+
+def get_news_status(user_id: int, news_hash: str) -> Optional[Dict]:
+    """Get the read/bookmark status for a specific news item."""
+    conn = get_db_connection()
+    row = conn.execute(
+        'SELECT * FROM user_news_status WHERE user_id = ? AND news_hash = ?',
+        (user_id, news_hash)
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def get_user_bookmarked_news(user_id: int, limit: int = 50, offset: int = 0) -> List[Dict]:
+    """Get all bookmarked news for a user."""
+    conn = get_db_connection()
+    rows = conn.execute(
+        '''SELECT * FROM user_news_status
+           WHERE user_id = ? AND is_bookmarked = 1
+           ORDER BY bookmarked_at DESC
+           LIMIT ? OFFSET ?''',
+        (user_id, limit, offset)
+    ).fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def get_user_read_news_hashes(user_id: int) -> set:
+    """Get all read news hashes for a user (for quick lookup)."""
+    conn = get_db_connection()
+    rows = conn.execute(
+        'SELECT news_hash FROM user_news_status WHERE user_id = ? AND is_read = 1',
+        (user_id,)
+    ).fetchall()
+    conn.close()
+    return {row['news_hash'] for row in rows}
+
+
+def mark_news_read(user_id: int, news_hash: str, news_title: str = None,
+                   news_source: str = None, news_url: str = None, news_category: str = None):
+    """Mark a news item as read."""
+    conn = get_db_connection()
+    c = conn.cursor()
+
+    exists = c.execute(
+        'SELECT id FROM user_news_status WHERE user_id = ? AND news_hash = ?',
+        (user_id, news_hash)
+    ).fetchone()
+
+    if exists:
+        c.execute('''
+            UPDATE user_news_status
+            SET is_read = 1, read_at = CURRENT_TIMESTAMP
+            WHERE user_id = ? AND news_hash = ?
+        ''', (user_id, news_hash))
+    else:
+        c.execute('''
+            INSERT INTO user_news_status
+            (user_id, news_hash, news_title, news_source, news_url, news_category, is_read, read_at)
+            VALUES (?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
+        ''', (user_id, news_hash, news_title, news_source, news_url, news_category))
+
+    conn.commit()
+    conn.close()
+
+
+def toggle_news_bookmark(user_id: int, news_hash: str, news_title: str = None,
+                         news_source: str = None, news_url: str = None,
+                         news_category: str = None) -> bool:
+    """Toggle bookmark status for a news item. Returns new bookmark state."""
+    conn = get_db_connection()
+    c = conn.cursor()
+
+    exists = c.execute(
+        'SELECT id, is_bookmarked FROM user_news_status WHERE user_id = ? AND news_hash = ?',
+        (user_id, news_hash)
+    ).fetchone()
+
+    if exists:
+        new_state = 0 if exists['is_bookmarked'] else 1
+        c.execute('''
+            UPDATE user_news_status
+            SET is_bookmarked = ?, bookmarked_at = CASE WHEN ? = 1 THEN CURRENT_TIMESTAMP ELSE bookmarked_at END
+            WHERE user_id = ? AND news_hash = ?
+        ''', (new_state, new_state, user_id, news_hash))
+    else:
+        new_state = 1
+        c.execute('''
+            INSERT INTO user_news_status
+            (user_id, news_hash, news_title, news_source, news_url, news_category, is_bookmarked, bookmarked_at)
+            VALUES (?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
+        ''', (user_id, news_hash, news_title, news_source, news_url, news_category))
+
+    conn.commit()
+    conn.close()
+    return bool(new_state)
+
+
+def set_news_bookmark(user_id: int, news_hash: str, bookmarked: bool,
+                      news_title: str = None, news_source: str = None,
+                      news_url: str = None, news_category: str = None):
+    """Set bookmark status explicitly."""
+    conn = get_db_connection()
+    c = conn.cursor()
+
+    exists = c.execute(
+        'SELECT id FROM user_news_status WHERE user_id = ? AND news_hash = ?',
+        (user_id, news_hash)
+    ).fetchone()
+
+    if exists:
+        c.execute('''
+            UPDATE user_news_status
+            SET is_bookmarked = ?, bookmarked_at = CASE WHEN ? = 1 THEN CURRENT_TIMESTAMP ELSE bookmarked_at END
+            WHERE user_id = ? AND news_hash = ?
+        ''', (bookmarked, bookmarked, user_id, news_hash))
+    else:
+        c.execute('''
+            INSERT INTO user_news_status
+            (user_id, news_hash, news_title, news_source, news_url, news_category, is_bookmarked, bookmarked_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, CASE WHEN ? = 1 THEN CURRENT_TIMESTAMP ELSE NULL END)
+        ''', (user_id, news_hash, news_title, news_source, news_url, news_category, bookmarked, bookmarked))
+
+    conn.commit()
+    conn.close()
+
+
+# --- News Cache Operations ---
+
+def get_news_cache(cache_key: str) -> Optional[Dict]:
+    """Get cached news data if not expired."""
+    conn = get_db_connection()
+    row = conn.execute(
+        '''SELECT * FROM news_cache
+           WHERE cache_key = ? AND expires_at > CURRENT_TIMESTAMP''',
+        (cache_key,)
+    ).fetchone()
+    conn.close()
+
+    if not row:
+        return None
+
+    result = dict(row)
+    if result.get('cache_data'):
+        try:
+            result['data'] = json.loads(result['cache_data'])
+        except:
+            result['data'] = None
+    return result
+
+
+def set_news_cache(cache_key: str, data: any, source: str, ttl_seconds: int = 600):
+    """Set news cache with TTL."""
+    conn = get_db_connection()
+    c = conn.cursor()
+
+    cache_data = json.dumps(data, ensure_ascii=False) if not isinstance(data, str) else data
+
+    c.execute('''
+        INSERT OR REPLACE INTO news_cache (cache_key, cache_data, source, expires_at)
+        VALUES (?, ?, ?, datetime('now', '+' || ? || ' seconds'))
+    ''', (cache_key, cache_data, source, ttl_seconds))
+
+    conn.commit()
+    conn.close()
+
+
+def clear_expired_news_cache():
+    """Remove expired cache entries."""
+    conn = get_db_connection()
+    conn.execute('DELETE FROM news_cache WHERE expires_at < CURRENT_TIMESTAMP')
+    conn.commit()
+    conn.close()
+
+
+# --- News Analysis Cache Operations ---
+
+def get_news_analysis(news_hash: str) -> Optional[Dict]:
+    """Get cached AI analysis for a news item."""
+    conn = get_db_connection()
+    row = conn.execute(
+        'SELECT * FROM news_analysis_cache WHERE news_hash = ?',
+        (news_hash,)
+    ).fetchone()
+    conn.close()
+
+    if not row:
+        return None
+
+    result = dict(row)
+    if result.get('key_points'):
+        try:
+            result['key_points'] = json.loads(result['key_points'])
+        except:
+            pass
+    if result.get('related_stocks'):
+        try:
+            result['related_stocks'] = json.loads(result['related_stocks'])
+        except:
+            pass
+    return result
+
+
+def save_news_analysis(news_hash: str, sentiment: str, sentiment_score: float,
+                       summary: str, key_points: List[str] = None,
+                       related_stocks: List[Dict] = None):
+    """Save AI analysis results for a news item."""
+    conn = get_db_connection()
+    c = conn.cursor()
+
+    key_points_json = json.dumps(key_points, ensure_ascii=False) if key_points else None
+    related_stocks_json = json.dumps(related_stocks, ensure_ascii=False) if related_stocks else None
+
+    c.execute('''
+        INSERT OR REPLACE INTO news_analysis_cache
+        (news_hash, sentiment, sentiment_score, summary, key_points, related_stocks, analyzed_at)
+        VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ''', (news_hash, sentiment, sentiment_score, summary, key_points_json, related_stocks_json))
+
+    conn.commit()
+    conn.close()
+
+
+def get_multiple_news_analysis(news_hashes: List[str]) -> Dict[str, Dict]:
+    """Get cached AI analysis for multiple news items."""
+    if not news_hashes:
+        return {}
+
+    conn = get_db_connection()
+    placeholders = ','.join('?' * len(news_hashes))
+    rows = conn.execute(
+        f'SELECT * FROM news_analysis_cache WHERE news_hash IN ({placeholders})',
+        tuple(news_hashes)
+    ).fetchall()
+    conn.close()
+
+    result = {}
+    for row in rows:
+        d = dict(row)
+        news_hash = d['news_hash']
+        if d.get('key_points'):
+            try:
+                d['key_points'] = json.loads(d['key_points'])
+            except:
+                pass
+        if d.get('related_stocks'):
+            try:
+                d['related_stocks'] = json.loads(d['related_stocks'])
+            except:
+                pass
+        result[news_hash] = d
+
+    return result
+
+
+# --- Stock Basic Operations (TuShare stock_basic cache) ---
+
+def upsert_stock_basic_batch(stocks: List[Dict]) -> int:
+    """
+    Batch insert/update stock basic info.
+
+    Args:
+        stocks: List of dicts with keys: ts_code, symbol, name, area, industry, market, list_date, list_status
+
+    Returns:
+        Number of stocks inserted/updated
+    """
+    if not stocks:
+        return 0
+
+    conn = get_db_connection()
+    c = conn.cursor()
+
+    count = 0
+    for stock in stocks:
+        try:
+            c.execute('''
+                INSERT OR REPLACE INTO stock_basic
+                (ts_code, symbol, name, area, industry, market, list_date, list_status, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ''', (
+                stock.get('ts_code'),
+                stock.get('symbol'),
+                stock.get('name'),
+                stock.get('area'),
+                stock.get('industry'),
+                stock.get('market'),
+                stock.get('list_date'),
+                stock.get('list_status', 'L'),
+            ))
+            count += 1
+        except Exception as e:
+            print(f"Error inserting stock {stock.get('ts_code')}: {e}")
+            continue
+
+    conn.commit()
+    conn.close()
+    return count
+
+
+def search_stock_basic(query: str, limit: int = 50) -> List[Dict]:
+    """
+    Search stocks by code prefix or name (fuzzy match).
+
+    Args:
+        query: Search query (code prefix or name substring)
+        limit: Maximum number of results
+
+    Returns:
+        List of matching stocks with fields: code, name, industry, market, area, list_date
+    """
+    conn = get_db_connection()
+
+    if not query:
+        # Return first N stocks if no query
+        rows = conn.execute(
+            'SELECT symbol, name, industry, market, area, list_date FROM stock_basic WHERE list_status = ? ORDER BY symbol LIMIT ?',
+            ('L', limit)
+        ).fetchall()
+    else:
+        query_lower = query.lower()
+        # Search by code prefix OR name contains
+        rows = conn.execute('''
+            SELECT symbol, name, industry, market, area, list_date
+            FROM stock_basic
+            WHERE list_status = 'L'
+              AND (symbol LIKE ? OR LOWER(name) LIKE ? OR LOWER(industry) LIKE ?)
+            ORDER BY
+              CASE WHEN symbol LIKE ? THEN 0 ELSE 1 END,
+              symbol
+            LIMIT ?
+        ''', (
+            f'{query}%',           # code prefix
+            f'%{query_lower}%',    # name contains
+            f'%{query_lower}%',    # industry contains
+            f'{query}%',           # prefer code prefix matches
+            limit
+        )).fetchall()
+
+    conn.close()
+
+    # Convert to list of dicts with frontend-friendly field names
+    results = []
+    for row in rows:
+        results.append({
+            'code': row['symbol'],
+            'name': row['name'],
+            'industry': row['industry'],
+            'market': row['market'],
+            'area': row['area'],
+            'list_date': row['list_date'],
+        })
+
+    return results
+
+
+def get_all_stock_basic() -> List[Dict]:
+    """Get all stock basic info (listed stocks only)."""
+    conn = get_db_connection()
+    rows = conn.execute(
+        'SELECT symbol, name, industry, market, area, list_date FROM stock_basic WHERE list_status = ?',
+        ('L',)
+    ).fetchall()
+    conn.close()
+
+    return [dict(row) for row in rows]
+
+
+def get_stock_basic_count() -> int:
+    """Get count of stocks in stock_basic table."""
+    conn = get_db_connection()
+    count = conn.execute('SELECT COUNT(*) FROM stock_basic WHERE list_status = ?', ('L',)).fetchone()[0]
+    conn.close()
+    return count
+
+
+def get_stock_basic_last_updated() -> Optional[str]:
+    """Get the last update timestamp from stock_basic table."""
+    conn = get_db_connection()
+    row = conn.execute('SELECT MAX(updated_at) FROM stock_basic').fetchone()
+    conn.close()
+    return row[0] if row and row[0] else None

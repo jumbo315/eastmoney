@@ -258,6 +258,10 @@ export const deleteStock = async (code: string): Promise<void> => {
 export interface MarketStock {
     code: string;
     name: string;
+    industry?: string;
+    market?: string;
+    area?: string;
+    list_date?: string;
 }
 
 export const searchMarketStocks = async (query: string): Promise<MarketStock[]> => {
@@ -649,5 +653,643 @@ export const compareFunds = async (codes: string[]): Promise<{
     funds: FundComparison[];
 }> => {
     const response = await api.post('/compare/funds', { codes });
+    return response.data;
+};
+
+
+// --- Widget API ---
+
+import type {
+    NorthboundFlowData,
+    IndustryFlowData,
+    SectorPerformanceData,
+    TopListData,
+    ForexRatesData,
+    WatchlistData,
+    NewsData,
+    MainCapitalFlowData,
+    DashboardLayout,
+    LayoutPresetsResponse,
+} from './widgets/types';
+
+export const fetchWidgetNorthboundFlow = async (days: number = 5): Promise<NorthboundFlowData> => {
+    const response = await api.get('/widgets/northbound-flow', { params: { days } });
+    return response.data;
+};
+
+export const fetchWidgetIndustryFlow = async (limit: number = 10): Promise<IndustryFlowData> => {
+    const response = await api.get('/widgets/industry-flow', { params: { limit } });
+    return response.data;
+};
+
+export const fetchWidgetSectorPerformance = async (limit: number = 10): Promise<SectorPerformanceData> => {
+    const response = await api.get('/widgets/sector-performance', { params: { limit } });
+    return response.data;
+};
+
+export const fetchWidgetTopList = async (limit: number = 10): Promise<TopListData> => {
+    const response = await api.get('/widgets/top-list', { params: { limit } });
+    return response.data;
+};
+
+export const fetchWidgetForexRates = async (): Promise<ForexRatesData> => {
+    const response = await api.get('/widgets/forex-rates');
+    return response.data;
+};
+
+export const fetchWidgetWatchlist = async (): Promise<WatchlistData> => {
+    const response = await api.get('/widgets/watchlist');
+    return response.data;
+};
+
+export const fetchWidgetNews = async (limit: number = 20, src: string = 'sina'): Promise<NewsData> => {
+    const response = await api.get('/widgets/news', { params: { limit, src } });
+    return response.data;
+};
+
+export const fetchWidgetMainCapitalFlow = async (limit: number = 10): Promise<MainCapitalFlowData> => {
+    const response = await api.get('/widgets/main-capital-flow', { params: { limit } });
+    return response.data;
+};
+
+
+// --- Dashboard Layout API ---
+
+export const fetchDashboardLayouts = async (): Promise<{ layouts: DashboardLayout[] }> => {
+    const response = await api.get('/dashboard/layouts');
+    return response.data;
+};
+
+export const fetchDashboardLayoutCount = async (): Promise<{ count: number; max: number }> => {
+    const response = await api.get('/dashboard/layouts/count');
+    return response.data;
+};
+
+export const fetchDefaultDashboardLayout = async (): Promise<{ layout: DashboardLayout | null; preset?: string }> => {
+    const response = await api.get('/dashboard/layouts/default');
+    return response.data;
+};
+
+export const fetchDashboardLayout = async (layoutId: number): Promise<DashboardLayout> => {
+    const response = await api.get(`/dashboard/layouts/${layoutId}`);
+    return response.data;
+};
+
+export const createDashboardLayout = async (data: {
+    name: string;
+    layout: Record<string, unknown>;
+    is_default?: boolean;
+}): Promise<{ id: number; message: string }> => {
+    const response = await api.post('/dashboard/layouts', data);
+    return response.data;
+};
+
+export const updateDashboardLayout = async (
+    layoutId: number,
+    data: {
+        name?: string;
+        layout?: Record<string, unknown>;
+        is_default?: boolean;
+    }
+): Promise<{ message: string }> => {
+    const response = await api.put(`/dashboard/layouts/${layoutId}`, data);
+    return response.data;
+};
+
+export const deleteDashboardLayout = async (layoutId: number): Promise<{ message: string }> => {
+    const response = await api.delete(`/dashboard/layouts/${layoutId}`);
+    return response.data;
+};
+
+export const setDefaultDashboardLayout = async (layoutId: number): Promise<{ message: string }> => {
+    const response = await api.post(`/dashboard/layouts/${layoutId}/set-default`);
+    return response.data;
+};
+
+export const fetchDashboardPresets = async (): Promise<LayoutPresetsResponse> => {
+    const response = await api.get('/dashboard/presets');
+    return response.data;
+};
+
+
+// --- News Center API ---
+
+export interface NewsItem {
+    id: string;
+    title: string;
+    content?: string;
+    summary?: string;
+    source: string;
+    source_name: string;
+    category: 'flash' | 'announcement' | 'research' | 'hot' | 'industry' | 'general';
+    sentiment?: 'positive' | 'negative' | 'neutral';
+    sentiment_score?: number;
+    related_stocks?: Array<{ code: string; name?: string; impact?: string }>;
+    related_funds?: Array<{ code: string; name?: string }>;
+    published_at: string;
+    url?: string;
+    is_read?: boolean;
+    is_bookmarked?: boolean;
+    importance?: 'high' | 'medium' | 'low';
+}
+
+export interface NewsFeedResponse {
+    news: NewsItem[];
+    has_watchlist: boolean;
+    watchlist_summary?: {
+        stocks_count: number;
+        funds_count: number;
+    };
+    category: string;
+    page: number;
+    page_size: number;
+    total: number;
+    has_more: boolean;
+    updated_at: string;
+}
+
+export interface NewsDetailResponse {
+    news_id: string;
+    analysis: {
+        sentiment?: string;
+        sentiment_score?: number;
+        summary?: string;
+        key_points?: string[];
+        related_stocks?: Array<{ code: string; name?: string; impact?: string }>;
+        cached?: boolean;
+        error?: string;
+    };
+    is_read: boolean;
+}
+
+export interface NewsBookmarkRequest {
+    news_title?: string;
+    news_source?: string;
+    news_url?: string;
+    news_category?: string;
+    bookmarked?: boolean;
+}
+
+export const fetchNewsFeed = async (
+    category: string = 'all',
+    page: number = 1,
+    pageSize: number = 20
+): Promise<NewsFeedResponse> => {
+    const response = await api.get('/news/feed', {
+        params: { category, page, page_size: pageSize }
+    });
+    return response.data;
+};
+
+export const fetchNewsDetail = async (
+    newsId: string,
+    title: string = '',
+    content: string = ''
+): Promise<NewsDetailResponse> => {
+    const response = await api.get(`/news/${newsId}`, {
+        params: { title, content }
+    });
+    return response.data;
+};
+
+export const toggleNewsBookmark = async (
+    newsId: string,
+    request: NewsBookmarkRequest
+): Promise<{ bookmarked: boolean }> => {
+    const response = await api.post(`/news/${newsId}/bookmark`, request);
+    return response.data;
+};
+
+export const markNewsRead = async (
+    newsId: string,
+    request: Partial<NewsBookmarkRequest>
+): Promise<{ success: boolean; is_read: boolean }> => {
+    const response = await api.post(`/news/${newsId}/read`, request);
+    return response.data;
+};
+
+export const fetchNewsBookmarks = async (
+    limit: number = 50,
+    offset: number = 0
+): Promise<{ bookmarks: NewsItem[]; total: number }> => {
+    const response = await api.get('/news/bookmarks', {
+        params: { limit, offset }
+    });
+    return response.data;
+};
+
+export const fetchNewsWatchlistSummary = async (): Promise<{
+    stocks_count: number;
+    funds_count: number;
+    recent_news_count: number;
+    unread_count: number;
+    important_news: Array<{ id: string; title: string; sentiment: string }>;
+    updated_at: string;
+}> => {
+    const response = await api.get('/news/watchlist-summary');
+    return response.data;
+};
+
+export const fetchNewsAnnouncements = async (
+    stockCode?: string,
+    limit: number = 20
+): Promise<{ announcements: NewsItem[]; total: number }> => {
+    const response = await api.get('/news/announcements', {
+        params: { stock_code: stockCode, limit }
+    });
+    return response.data;
+};
+
+export const searchNewsResearch = async (
+    query: string,
+    limit: number = 10
+): Promise<{ results: NewsItem[]; total: number }> => {
+    const response = await api.get('/news/research', {
+        params: { query, limit }
+    });
+    return response.data;
+};
+
+export const fetchHotNews = async (
+    limit: number = 30
+): Promise<{ news: NewsItem[]; total: number }> => {
+    const response = await api.get('/news/hot', { params: { limit } });
+    return response.data;
+};
+
+
+// --- AI Assistant API ---
+
+export interface AssistantContext {
+    page?: string;
+    stock?: { code: string; name: string } | null;
+    fund?: { code: string; name: string } | null;
+}
+
+export interface AssistantMessage {
+    role: 'user' | 'assistant';
+    content: string;
+}
+
+export interface AssistantSource {
+    title: string;
+    url?: string;
+    source?: string;
+    type?: string;
+}
+
+export interface AssistantChatRequest {
+    message: string;
+    context?: AssistantContext;
+    history?: AssistantMessage[];
+}
+
+export interface AssistantChatResponse {
+    response: string;
+    sources: AssistantSource[];
+    context_used: {
+        stock_code?: string;
+        fund_code?: string;
+        intent?: string;
+        search_keywords?: string[];
+        tools_used?: Array<{
+            name: string;
+            arguments: Record<string, unknown>;
+            success: boolean;
+        }>;
+    };
+    suggested_questions?: string[];
+}
+
+export const sendAssistantMessage = async (
+    request: AssistantChatRequest
+): Promise<AssistantChatResponse> => {
+    const response = await api.post('/assistant/chat', request);
+    return response.data;
+};
+
+export const getAssistantSuggestions = async (
+    context: AssistantContext
+): Promise<{ suggestions: string[] }> => {
+    const response = await api.get('/assistant/suggestions', {
+        params: {
+            page: context.page,
+            stock_code: context.stock?.code,
+            stock_name: context.stock?.name,
+            fund_code: context.fund?.code,
+            fund_name: context.fund?.name,
+        }
+    });
+    return response.data;
+};
+
+
+// --- Stock Professional Features API ---
+
+// Financial Health Diagnosis Types
+export interface FinancialIndicator {
+    ts_code: string;
+    ann_date: string;
+    end_date: string;
+    roe?: number;
+    roe_waa?: number;
+    roa?: number;
+    npta?: number;
+    profit_dedt?: number;
+    op_yoy?: number;
+    ebt_yoy?: number;
+    netprofit_margin?: number;
+    grossprofit_margin?: number;
+    debt_to_assets?: number;
+    current_ratio?: number;
+    quick_ratio?: number;
+    ocfps?: number;
+    bps?: number;
+    cfps?: number;
+    eps?: number;
+}
+
+export interface IncomeStatement {
+    ts_code: string;
+    ann_date: string;
+    end_date: string;
+    total_revenue?: number;
+    revenue?: number;
+    total_cogs?: number;
+    oper_cost?: number;
+    sell_exp?: number;
+    admin_exp?: number;
+    fin_exp?: number;
+    operate_profit?: number;
+    total_profit?: number;
+    income_tax?: number;
+    n_income?: number;
+    n_income_attr_p?: number;
+}
+
+export interface FinancialSummary {
+    roe?: number;
+    netprofit_margin?: number;
+    debt_to_assets?: number;
+    grossprofit_margin?: number;
+    current_ratio?: number;
+    quick_ratio?: number;
+    eps?: number;
+    bps?: number;
+}
+
+export interface FinancialData {
+    code: string;
+    indicators: FinancialIndicator[];
+    income: IncomeStatement[];
+    balance: Record<string, unknown>[];
+    cashflow: Record<string, unknown>[];
+    health_score?: number;
+    summary: FinancialSummary;
+}
+
+// Shareholder Structure Types
+export interface HolderInfo {
+    ts_code: string;
+    ann_date: string;
+    end_date: string;
+    holder_name: string;
+    hold_amount?: number;
+    hold_ratio?: number;
+    holder_type?: string;
+}
+
+export interface HolderPeriod {
+    period: string;
+    holders: HolderInfo[];
+}
+
+export interface HolderNumberTrend {
+    ts_code: string;
+    ann_date: string;
+    end_date: string;
+    holder_num?: number;
+    holder_num_pct_change?: number;
+}
+
+export interface ConcentrationChange {
+    value: number;
+    trend: 'increasing' | 'decreasing';
+    signal: 'positive' | 'negative' | 'neutral';
+}
+
+export interface ShareholderData {
+    code: string;
+    top10_holders: HolderPeriod[];
+    holder_number_trend: HolderNumberTrend[];
+    concentration_change?: ConcentrationChange;
+    latest_period?: string;
+}
+
+// Margin/Leverage Fund Types
+export interface MarginRecord {
+    ts_code: string;
+    trade_date: string;
+    rzye?: number;      // 融资余额
+    rqye?: number;      // 融券余额
+    rzmre?: number;     // 融资买入额
+    rqmcl?: number;     // 融券卖出量
+    rzche?: number;     // 融资偿还额
+    rqchl?: number;     // 融券偿还量
+}
+
+export interface MarginSummary {
+    rzye?: number;
+    rqye?: number;
+    rzmre?: number;
+    rqmcl?: number;
+    trade_date: string;
+    rzye_5d_change?: number;
+}
+
+export interface MarginSentiment {
+    financing_ratio: number;
+    signal: 'bullish' | 'neutral' | 'bearish';
+    description: string;
+}
+
+export interface MarginData {
+    code: string;
+    margin_data: MarginRecord[];
+    summary: MarginSummary;
+    sentiment?: MarginSentiment;
+}
+
+// Event Calendar Types
+export interface ForecastRecord {
+    ts_code: string;
+    ann_date: string;
+    end_date: string;
+    type?: string;
+    p_change_min?: number;
+    p_change_max?: number;
+    net_profit_min?: number;
+    net_profit_max?: number;
+    summary?: string;
+}
+
+export interface ShareUnlockRecord {
+    ts_code: string;
+    ann_date: string;
+    float_date: string;
+    float_share?: number;
+    float_ratio?: number;
+    holder_name?: string;
+    share_type?: string;
+}
+
+export interface DividendRecord {
+    ts_code: string;
+    end_date: string;
+    ann_date: string;
+    div_proc?: string;
+    stk_div?: number;
+    stk_bo_rate?: number;
+    stk_co_rate?: number;
+    cash_div?: number;
+    cash_div_tax?: number;
+    record_date?: string;
+    ex_date?: string;
+    pay_date?: string;
+}
+
+export interface UpcomingEvent {
+    type: 'forecast' | 'unlock' | 'dividend';
+    date: string;
+    title: string;
+    detail: string;
+    sentiment: 'positive' | 'negative' | 'warning' | 'neutral';
+}
+
+export interface EventData {
+    code: string;
+    forecasts: ForecastRecord[];
+    share_unlock: ShareUnlockRecord[];
+    dividends: DividendRecord[];
+    upcoming_events: UpcomingEvent[];
+}
+
+// Quantitative Signal Types
+export interface FactorRecord {
+    ts_code: string;
+    trade_date: string;
+    close?: number;
+    macd_dif?: number;
+    macd_dea?: number;
+    macd?: number;
+    kdj_k?: number;
+    kdj_d?: number;
+    kdj_j?: number;
+    rsi_6?: number;
+    rsi_12?: number;
+    rsi_24?: number;
+    boll_upper?: number;
+    boll_mid?: number;
+    boll_lower?: number;
+}
+
+export interface SignalValue {
+    signal: 'bullish' | 'bearish' | 'neutral' | 'overbought' | 'oversold';
+    value?: number | { upper: number; mid?: number; lower: number; close: number };
+}
+
+export interface OverallSignal {
+    direction: 'bullish' | 'bearish' | 'neutral';
+    strength: 'strong' | 'moderate' | 'weak';
+    score: number;
+}
+
+export interface ChipSummary {
+    winner_rate?: number;
+    cost_5pct?: number;
+    cost_50pct?: number;
+    cost_95pct?: number;
+    weight_avg?: number;
+}
+
+export interface QuantData {
+    code: string;
+    factors: FactorRecord[];
+    chip_data: Record<string, unknown>[];
+    signals: {
+        macd: SignalValue;
+        kdj: SignalValue;
+        rsi: SignalValue;
+        boll: SignalValue;
+    };
+    overall_signal?: OverallSignal;
+    chip_summary?: ChipSummary;
+}
+
+// API Functions for Stock Professional Features
+export const fetchStockFinancials = async (code: string): Promise<FinancialData> => {
+    const response = await api.get(`/stocks/${code}/financials`);
+    return response.data;
+};
+
+export const fetchStockShareholders = async (code: string): Promise<ShareholderData> => {
+    const response = await api.get(`/stocks/${code}/shareholders`);
+    return response.data;
+};
+
+export const fetchStockMargin = async (code: string): Promise<MarginData> => {
+    const response = await api.get(`/stocks/${code}/margin`);
+    return response.data;
+};
+
+export const fetchStockEvents = async (code: string): Promise<EventData> => {
+    const response = await api.get(`/stocks/${code}/events`);
+    return response.data;
+};
+
+export const fetchStockQuant = async (code: string): Promise<QuantData> => {
+    const response = await api.get(`/stocks/${code}/quant`);
+    return response.data;
+};
+
+
+// --- AI Stock Diagnosis API ---
+
+export interface StockDiagnosis {
+    score: number;
+    rating: string;
+    recommendation: string;
+    highlights: string[];
+    risks: string[];
+    action_advice: string;
+    key_focus: string;
+}
+
+export interface DiagnosisResponse {
+    code: string;
+    name: string;
+    diagnosis: StockDiagnosis;
+    data_timestamp: string;
+}
+
+export interface QuantInterpretation {
+    pattern: string;
+    interpretation: string;
+    action: string;
+}
+
+export interface QuantInterpretationResponse {
+    code: string;
+    interpretation: QuantInterpretation;
+    timestamp: string;
+}
+
+export const fetchStockAIDiagnosis = async (code: string): Promise<DiagnosisResponse> => {
+    const response = await api.get(`/stocks/${code}/ai-diagnosis`);
+    return response.data;
+};
+
+export const fetchQuantAIInterpretation = async (code: string): Promise<QuantInterpretationResponse> => {
+    const response = await api.get(`/stocks/${code}/quant/ai-interpret`);
     return response.data;
 };

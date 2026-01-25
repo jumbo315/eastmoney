@@ -1,14 +1,14 @@
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { 
-  Typography, 
-  Button, 
-  Grid, 
-  IconButton, 
-  TextField, 
-  Dialog, 
-  DialogTitle, 
-  DialogContent, 
+import {
+  Typography,
+  Button,
+  Grid,
+  IconButton,
+  TextField,
+  Dialog,
+  DialogTitle,
+  DialogContent,
   DialogActions,
   Autocomplete,
   CircularProgress,
@@ -43,21 +43,23 @@ import AnalyticsIcon from '@mui/icons-material/Analytics';
 import AssessmentIcon from '@mui/icons-material/Assessment';
 import EditIcon from '@mui/icons-material/Edit';
 
-import { 
-  fetchFunds, 
-  saveFund, 
-  deleteFund, 
-  searchMarketFunds, 
-  fetchFundMarketDetails, 
+import {
+  fetchFunds,
+  saveFund,
+  deleteFund,
+  searchMarketFunds,
+  fetchFundMarketDetails,
   fetchFundNavHistory,
   generateReport,
 } from '../api';
 
 import type{MarketFund,FundItem,NavPoint}  from '../api';
+import { useAppContext } from '../contexts/AppContext';
 
 
 export default function FundsPage() {
   const { t } = useTranslation();
+  const { setCurrentPage, setCurrentFund } = useAppContext();
   const [funds, setFunds] = useState<FundItem[]>([]);
   const [loading, setLoading] = useState(false);
   
@@ -195,7 +197,12 @@ export default function FundsPage() {
   };
 
   useEffect(() => {
+    setCurrentPage('funds');
     loadFunds();
+    return () => {
+      // Clear fund context when leaving page
+      setCurrentFund(null);
+    };
   }, []);
 
   const loadFunds = async () => {
@@ -227,7 +234,10 @@ export default function FundsPage() {
     setLoadingDetails(true);
     setFundDetails(null);
     setNavHistory([]);
-    
+
+    // Update context for AI assistant
+    setCurrentFund({ code: fund.code, name: fund.name });
+
     try {
       const [details, nav] = await Promise.all([
         fetchFundMarketDetails(fund.code),

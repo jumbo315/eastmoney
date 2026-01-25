@@ -58,21 +58,37 @@ def get_stock_history(code: str, days: int = 100) -> List[Dict]:
     """
     Fetch daily history for a stock.
     Returns: List of {date, value, volume, ...}
+    使用 TuShare Pro 作为主要数据源，AkShare 作为后备
+
+    Migration Note: Now uses TuShare as primary source (Phase 4)
     """
+    from config.settings import DATA_SOURCE_PROVIDER
+
+    # Use TuShare for stock history
+    if DATA_SOURCE_PROVIDER in ('tushare', 'hybrid'):
+        try:
+            from src.data_sources.data_source_manager import get_stock_history_from_tushare
+            result = get_stock_history_from_tushare(code, days)
+            if result:
+                return result
+        except Exception as e:
+            print(f"TuShare stock history failed, falling back to AkShare: {e}")
+
+    # Fallback to AkShare
     try:
         code = _normalize_a_stock_code(code)
         end_date = datetime.now()
         # Estimate start date (trading days != calendar days, so multiply by 1.5 buffer)
-        start_date = end_date - timedelta(days=int(days * 1.6)) 
-        
+        start_date = end_date - timedelta(days=int(days * 1.6))
+
         start_str = start_date.strftime("%Y%m%d")
         end_str = end_date.strftime("%Y%m%d")
-        
+
         df = ak.stock_zh_a_hist(symbol=code, period="daily", start_date=start_str, end_date=end_str, adjust="qfq")
-        
+
         if df is None or df.empty:
             return []
-            
+
         # df columns: 日期, 开盘, 收盘, 最高, 最低, 成交量, 成交额, ...
         # Standardize to: date, value (close)
         result = []
@@ -82,7 +98,7 @@ def get_stock_history(code: str, days: int = 100) -> List[Dict]:
                 "value": float(row['收盘']),
                 "volume": float(row['成交量'])
             })
-            
+
         return result
     except Exception as e:
         print(f"Error fetching history for {code}: {e}")
@@ -96,7 +112,22 @@ def get_us_market_overview() -> Dict:
     """
     获取隔夜美股市场概览：三大指数
     Returns: {指数名: {最新价, 涨跌幅, ...}}
+
+    Migration Note: Now uses yFinance as primary source (Phase 3 - US market priority)
     """
+    from config.settings import DATA_SOURCE_PROVIDER
+
+    # Use yFinance for US market data (more reliable per Phase 3 priority)
+    if DATA_SOURCE_PROVIDER in ('yfinance', 'hybrid'):
+        try:
+            from src.data_sources.data_source_manager import get_us_market_overview_from_yfinance
+            result = get_us_market_overview_from_yfinance()
+            if result and '说明' not in result:
+                return result
+        except Exception as e:
+            print(f"yFinance US market fetch failed, falling back to AkShare: {e}")
+
+    # Fallback to AkShare if yFinance fails or provider is 'akshare'
     result = {}
     try:
         # 使用全球指数接口获取美股三大指数
@@ -106,10 +137,10 @@ def get_us_market_overview() -> Dict:
             # Actually index_global_spot_em has '名称' column.
             # We want to match these names:
             target_names = ['道琼斯', '纳斯达克', '标普500']
-            
+
             # Optimized: Filter dataframe directly
             filtered_df = df[df['名称'].isin(target_names)]
-            
+
             for _, r in filtered_df.iterrows():
                 name = r['名称']
                 result[name] = {
@@ -123,7 +154,7 @@ def get_us_market_overview() -> Dict:
                 }
     except Exception as e:
         print(f"Error fetching US market: {e}")
-    
+
     return result if result else {"说明": "美股数据暂时无法获取"}
 
 def get_a50_futures() -> Dict:
@@ -159,8 +190,26 @@ def get_a50_futures() -> Dict:
 def get_forex_rates() -> Dict:
     """
     获取关键汇率：美元/人民币
+
+    Migration Note: Phase 5 - Hybrid strategy
+    - TuShare: Daily EOD closing prices (historical data)
+    - AkShare: Real-time bid/ask quotes (live data)
     """
+    from config.settings import DATA_SOURCE_PROVIDER
+
     result = {}
+
+    # TuShare for daily historical/EOD data
+    if DATA_SOURCE_PROVIDER in ('tushare', 'hybrid'):
+        try:
+            from src.data_sources.data_source_manager import get_forex_rates_from_tushare
+            ts_result = get_forex_rates_from_tushare()
+            if ts_result:
+                result.update(ts_result)
+        except Exception as e:
+            print(f"TuShare forex error: {e}")
+
+    # AkShare for real-time bid/ask quotes (complement)
     try:
         df = ak.fx_spot_quote()
         if not df.empty:
@@ -168,12 +217,18 @@ def get_forex_rates() -> Dict:
             usdcny = df[df['货币对'].str.contains('USD/CNY', na=False, case=False)]
             if not usdcny.empty:
                 row = usdcny.iloc[0]
-                result["美元/人民币"] = {
-                    "货币对": row.get('货币对', 'USD/CNY'),
-                    "买入价": row.get('买报价', 'N/A'),
-                    "卖出价": row.get('卖报价', 'N/A')
-                }
-            
+                # If TuShare provided data, augment with real-time prices
+                if "美元/人民币" in result:
+                    result["美元/人民币"]["实时买入价"] = row.get('买报价', 'N/A')
+                    result["美元/人民币"]["实时卖出价"] = row.get('卖报价', 'N/A')
+                else:
+                    # Otherwise, use AkShare as primary
+                    result["美元/人民币"] = {
+                        "货币对": row.get('货币对', 'USD/CNY'),
+                        "买入价": row.get('买报价', 'N/A'),
+                        "卖出价": row.get('卖报价', 'N/A')
+                    }
+
             # 获取其他重要汇率
             eurcny = df[df['货币对'].str.contains('EUR/CNY', na=False, case=False)]
             if not eurcny.empty:
@@ -183,8 +238,8 @@ def get_forex_rates() -> Dict:
                     "卖出价": row.get('卖报价', 'N/A')
                 }
     except Exception as e:
-        print(f"Error fetching forex: {e}")
-    
+        print(f"Error fetching forex from AkShare: {e}")
+
     # 备选方案：使用百度汇率
     if not result:
         try:
@@ -195,7 +250,7 @@ def get_forex_rates() -> Dict:
                     result["美元/人民币"] = {"最新价": usd.iloc[0].get('现汇买入价', 'N/A')}
         except Exception as e:
             print(f"Baidu forex fallback failed: {e}")
-    
+
     return result if result else {"说明": "汇率数据暂时无法获取"}
 
 def get_global_macro_summary() -> Dict:
@@ -215,8 +270,23 @@ def get_global_macro_summary() -> Dict:
 def get_northbound_flow() -> Dict:
     """
     获取北向资金（沪股通+深股通）净流入数据
-    使用 stock_hsgt_fund_flow_summary_em 获取实时汇总数据
+    使用 TuShare Pro 作为主要数据源，AkShare 作为后备
+
+    Migration Note: Now uses TuShare as primary source (Phase 4)
     """
+    from config.settings import DATA_SOURCE_PROVIDER
+
+    # Use TuShare for northbound flow data
+    if DATA_SOURCE_PROVIDER in ('tushare', 'hybrid'):
+        try:
+            from src.data_sources.data_source_manager import get_northbound_flow_from_tushare
+            result = get_northbound_flow_from_tushare()
+            if result:
+                return result
+        except Exception as e:
+            print(f"TuShare northbound flow failed, falling back to AkShare: {e}")
+
+    # Fallback to AkShare
     result = {}
     try:
         # 方案1：使用实时汇总数据（最可靠）
@@ -246,7 +316,7 @@ def get_northbound_flow() -> Dict:
                 if hasattr(trade_date, 'strftime'):
                     trade_date = trade_date.strftime('%Y-%m-%d')
                 result['数据日期'] = str(trade_date)
-        
+
         # 方案2：获取历史数据计算5日累计（如果方案1成功后补充）
         if result:
             try:
@@ -270,16 +340,31 @@ def get_northbound_flow() -> Dict:
                                 break
             except Exception as e:
                 print(f"Historical northbound data failed: {e}")
-                
+
     except Exception as e:
         print(f"Error fetching northbound flow: {e}")
-    
+
     return result if result else {"说明": "北向资金数据暂时无法获取"}
 
 def get_industry_capital_flow(industry: str = None) -> Dict:
     """
     获取行业资金流向
+
+    Migration Note: Phase 5 - TuShare pro.concept_detail() as primary
     """
+    from config.settings import DATA_SOURCE_PROVIDER
+
+    # Try TuShare first (if enabled and industry specified)
+    if industry and DATA_SOURCE_PROVIDER in ('tushare', 'hybrid'):
+        try:
+            from src.data_sources.data_source_manager import get_industry_capital_flow_from_tushare
+            result = get_industry_capital_flow_from_tushare(industry)
+            if result:
+                return result
+        except Exception as e:
+            print(f"TuShare industry flow error: {e}")
+
+    # Fallback to AkShare
     try:
         df = ak.stock_sector_fund_flow_rank()
         if not df.empty:
@@ -300,7 +385,22 @@ def get_industry_capital_flow(industry: str = None) -> Dict:
 def get_stock_announcement(stock_code: str, stock_name: str) -> List[Dict]:
     """
     获取个股最新公告（巨潮资讯）
+
+    Migration Note: Phase 5 - TuShare pro.anns() as primary, AkShare fallback
     """
+    from config.settings import DATA_SOURCE_PROVIDER
+
+    # Try TuShare first (if enabled)
+    if DATA_SOURCE_PROVIDER in ('tushare', 'hybrid'):
+        try:
+            from src.data_sources.data_source_manager import get_stock_announcements_from_tushare
+            result = get_stock_announcements_from_tushare(stock_code, limit=5)
+            if result:
+                return result
+        except Exception as e:
+            print(f"TuShare announcements error for {stock_name}: {e}")
+
+    # Fallback to AkShare
     announcements = []
     try:
         # 尝试获取公告 - 使用巨潮资讯接口，支持更多市场（包括北交所）
@@ -309,7 +409,7 @@ def get_stock_announcement(stock_code: str, stock_name: str) -> List[Dict]:
             # 按时间倒序排序 (API通常已排序，但也可能未排序)
             if '公告时间' in df.columns:
                  df.sort_values(by='公告时间', ascending=False, inplace=True)
-            
+
             # 最近5条公告
             recent = df.head(5)
             announcements = recent.to_dict('records')
@@ -401,14 +501,58 @@ def get_stock_realtime_quote(
 def get_stock_news_sentiment(stock_name: str) -> List[Dict]:
     """
     获取个股相关新闻（东方财富）
+
+    Migration Note: Phase 5 - Enhanced with web search
+    - TuShare has no news API (keep using AkShare)
+    - Supplement with web search when data is insufficient
     """
+    results = []
+
+    # Primary: AkShare (free and fast)
     try:
         df = ak.stock_news_em(symbol=stock_name)
         if not df.empty:
-            return df.head(5).to_dict('records')
+            for _, row in df.head(5).iterrows():
+                results.append({
+                    '标题': row.get('新闻标题', row.get('标题', '')),
+                    '内容': row.get('新闻内容', row.get('内容', ''))[:200],  # Truncate
+                    '发布时间': str(row.get('发布时间', row.get('时间', ''))),
+                    '来源': 'AkShare-东方财富',
+                    '网址': row.get('新闻链接', '')
+                })
     except Exception as e:
-        print(f"Error fetching news for {stock_name}: {e}")
-    return []
+        print(f"Error fetching news from AkShare for {stock_name}: {e}")
+
+    # Supplement with web search if insufficient data
+    if len(results) < 3:
+        try:
+            from src.data_sources.web_search import WebSearch
+            searcher = WebSearch()
+
+            # Use search_news method for general news
+            web_results = searcher.search_news(f"{stock_name} 最新动态", max_results=5)
+
+            for item in web_results:
+                # Avoid duplicates
+                if any(r.get('标题') == item.get('title') for r in results):
+                    continue
+
+                results.append({
+                    '标题': item.get('title', ''),
+                    '内容': item.get('content', '')[:200],
+                    '发布时间': item.get('published_date', ''),
+                    '来源': f"Web-{item.get('domain', 'Unknown')}",
+                    '网址': item.get('url', '')
+                })
+
+                # Stop when we have enough
+                if len(results) >= 10:
+                    break
+
+        except Exception as e:
+            print(f"Web search supplement failed for {stock_name}: {e}")
+
+    return results[:10]  # Max 10 results
 
 # ============================================================================
 # SECTION 4: 行业与板块数据 (Sector Data)
@@ -433,19 +577,34 @@ def get_sector_performance(sector_name: str = None) -> Dict:
 def get_sector_performance_ths(sector_name: str) -> Dict:
     """
     获取同花顺行业板块表现
+
+    Migration Note: Phase 5 - TuShare pro.ths_index() as primary
     """
+    from config.settings import DATA_SOURCE_PROVIDER
+
+    # Try TuShare first (if enabled)
+    if DATA_SOURCE_PROVIDER in ('tushare', 'hybrid'):
+        try:
+            from src.data_sources.data_source_manager import get_sector_performance_ths_from_tushare
+            result = get_sector_performance_ths_from_tushare(sector_name)
+            if result:
+                return result
+        except Exception as e:
+            print(f"TuShare THS index error for {sector_name}: {e}")
+
+    # Fallback to AkShare
     try:
         # 1. Get all board names
         boards = ak.stock_board_industry_name_ths()
         if boards.empty:
             return {}
-            
+
         target_name = None
         # Simple fuzzy match
         # If input is "半导体", match "半导体"
         # If input is "新能源", match "新能源汽车" or similar?
         # Let's try exact match first, then contains
-        
+
         # Check if direct match exists
         if sector_name in boards['name'].values:
             target_name = sector_name
@@ -454,17 +613,17 @@ def get_sector_performance_ths(sector_name: str) -> Dict:
             matches = boards[boards['name'].str.contains(sector_name, na=False, regex=False)]
             if not matches.empty:
                 target_name = matches.iloc[0]['name']
-        
+
         if not target_name:
             return {}
-            
+
         # 2. Fetch Index Data
         # akshare expects start/end date usually to reduce data
         end_date = datetime.now().strftime("%Y%m%d")
         start_date = (datetime.now() - timedelta(days=10)).strftime("%Y%m%d")
-        
+
         df = ak.stock_board_industry_index_ths(symbol=target_name, start_date=start_date, end_date=end_date)
-        
+
         if not df.empty:
             latest = df.iloc[-1]
             # Calculate change
@@ -475,7 +634,7 @@ def get_sector_performance_ths(sector_name: str) -> Dict:
                 if prev and float(prev) != 0:
                     pct = ((float(curr) - float(prev)) / float(prev)) * 100
                     change_pct = f"{pct:.2f}"
-            
+
             return {
                 "板块名称": target_name,
                 "收盘价": latest['收盘价'],
@@ -484,7 +643,7 @@ def get_sector_performance_ths(sector_name: str) -> Dict:
                 "成交额": latest['成交额'],
                 "日期": latest['日期']
             }
-            
+
     except Exception as e:
         print(f"Error fetching THS sector performance for {sector_name}: {e}")
     return {}
@@ -512,8 +671,23 @@ def get_concept_board_performance(concept: str = None) -> Dict:
 def get_fund_info(fund_code: str):
     """
     Fetch basic fund information and net value history.
-    Uses akshare's fund_open_fund_info_em or similar.
+    Uses TuShare Pro as primary source, akshare as fallback.
+
+    Migration Note: Now uses TuShare as primary source (Phase 4)
     """
+    from config.settings import DATA_SOURCE_PROVIDER
+
+    # Use TuShare for fund info
+    if DATA_SOURCE_PROVIDER in ('tushare', 'hybrid'):
+        try:
+            from src.data_sources.data_source_manager import get_fund_info_from_tushare
+            result = get_fund_info_from_tushare(fund_code)
+            if result is not None and not result.empty:
+                return result
+        except Exception as e:
+            print(f"TuShare fund info failed, falling back to AkShare: {e}")
+
+    # Fallback to AkShare
     try:
         # Fetching net value history
         df = ak.fund_open_fund_info_em(symbol=fund_code, indicator="单位净值走势")
@@ -550,11 +724,27 @@ def get_fund_holdings(fund_code: str, year: str = None):
     """
     Fetch the latest top 10 holdings for the fund.
     Defaults to the current year if not specified.
+    使用 TuShare Pro 作为主要数据源，AkShare 作为后备
+
+    Migration Note: Now uses TuShare as primary source (Phase 4)
     """
+    from config.settings import DATA_SOURCE_PROVIDER
+
     current_year = str(datetime.now().year)
     if not year:
         year = current_year
-    
+
+    # Use TuShare for fund holdings
+    if DATA_SOURCE_PROVIDER in ('tushare', 'hybrid'):
+        try:
+            from src.data_sources.data_source_manager import get_fund_holdings_from_tushare
+            result = get_fund_holdings_from_tushare(fund_code, year)
+            if result is not None and not result.empty:
+                return result
+        except Exception as e:
+            print(f"TuShare fund holdings failed, falling back to AkShare: {e}")
+
+    # Fallback to AkShare
     try:
         # fund_portfolio_hold_em signature varies by AkShare version.
         # In the installed AkShare (2024/06+), it is: fund_portfolio_hold_em(symbol, date)
@@ -576,7 +766,7 @@ def get_fund_holdings(fund_code: str, year: str = None):
 
         # fund_portfolio_hold_em: returns holding details
         df = _call_holdings(year)
-        
+
         # Fallback to previous year if current year is empty (common in early Jan)
         if df.empty and year == current_year:
             prev_year = str(int(year) - 1)
@@ -597,14 +787,28 @@ def get_fund_holdings(fund_code: str, year: str = None):
 def get_market_indices():
     """
     Fetch key market indices for context (A50, Shanghai Composite, etc.)
-    Note: Real-time data might require different APIs. 
-    Here we fetch daily historical data to get yesterday's close.
+    使用 TuShare Pro 作为主要数据源，AkShare 作为后备
+
+    Migration Note: Now uses TuShare as primary source (Phase 4)
     """
+    from config.settings import DATA_SOURCE_PROVIDER
+
+    # Use TuShare for market indices
+    if DATA_SOURCE_PROVIDER in ('tushare', 'hybrid'):
+        try:
+            from src.data_sources.data_source_manager import get_market_indices_from_tushare
+            result = get_market_indices_from_tushare()
+            if result:
+                return result
+        except Exception as e:
+            print(f"TuShare market indices failed, falling back to AkShare: {e}")
+
+    # Fallback to AkShare
     indices = {
         "sh000001": "上证指数",
         "sz399006": "创业板指数",
     }
-    
+
     market_data: Dict[str, Dict] = {}
     try:
         for symbol, name in indices.items():
