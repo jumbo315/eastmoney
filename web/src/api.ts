@@ -1619,3 +1619,667 @@ export const deletePosition = async (positionId: number): Promise<{ message: str
     const response = await api.delete(`/portfolio/positions/${positionId}`);
     return response.data;
 };
+
+
+// ====================================================================
+// New Multi-Portfolio Management API
+// ====================================================================
+
+// --- Types ---
+
+export interface Portfolio {
+    id: number;
+    user_id: number;
+    name: string;
+    description?: string;
+    benchmark_code: string;
+    is_default: boolean;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface UnifiedPosition {
+    id: number;
+    portfolio_id: number;
+    user_id: number;
+    asset_type: 'stock' | 'fund';
+    asset_code: string;
+    asset_name?: string;
+    total_shares: number;
+    average_cost: number;
+    total_cost: number;
+    current_price?: number | null;
+    current_value?: number | null;
+    unrealized_pnl?: number | null;
+    unrealized_pnl_pct?: number | null;
+    sector?: string;
+    notes?: string;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface Transaction {
+    id: number;
+    position_id?: number;
+    portfolio_id: number;
+    user_id: number;
+    asset_type: string;
+    asset_code: string;
+    asset_name?: string;
+    transaction_type: 'buy' | 'sell' | 'dividend' | 'split' | 'transfer_in' | 'transfer_out';
+    shares: number;
+    price: number;
+    total_amount: number;
+    fees: number;
+    transaction_date: string;
+    notes?: string;
+    created_at: string;
+}
+
+export interface TransactionCreateData {
+    asset_type: string;
+    asset_code: string;
+    asset_name?: string;
+    transaction_type: string;
+    shares: number;
+    price: number;
+    total_amount?: number;
+    fees?: number;
+    transaction_date: string;
+    notes?: string;
+}
+
+export interface PortfolioCreateData {
+    name: string;
+    description?: string;
+    benchmark_code?: string;
+    is_default?: boolean;
+}
+
+export interface UnifiedPositionCreateData {
+    asset_type: string;
+    asset_code: string;
+    asset_name?: string;
+    total_shares: number;
+    average_cost: number;
+    sector?: string;
+    notes?: string;
+}
+
+export interface DIPPlan {
+    id: number;
+    portfolio_id: number;
+    user_id: number;
+    asset_type: 'stock' | 'fund';
+    asset_code: string;
+    asset_name?: string;
+    amount_per_period: number;
+    frequency: 'daily' | 'weekly' | 'biweekly' | 'monthly';
+    execution_day?: number;
+    start_date: string;
+    end_date?: string;
+    is_active: boolean;
+    total_invested: number;
+    total_shares: number;
+    execution_count: number;
+    last_executed_at?: string;
+    next_execution_date?: string;
+    notes?: string;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface DIPPlanCreateData {
+    asset_type: string;
+    asset_code: string;
+    asset_name?: string;
+    amount_per_period: number;
+    frequency: string;
+    execution_day?: number;
+    start_date: string;
+    end_date?: string;
+    is_active?: boolean;
+    notes?: string;
+}
+
+export interface PortfolioAlert {
+    id: number;
+    portfolio_id: number;
+    user_id: number;
+    alert_type: string;
+    severity: 'info' | 'warning' | 'critical';
+    title: string;
+    message: string;
+    details?: Record<string, any>;
+    is_read: boolean;
+    is_dismissed: boolean;
+    triggered_at: string;
+    read_at?: string;
+    dismissed_at?: string;
+}
+
+export interface PortfolioDiagnosisDimension {
+    name: string;
+    score: number;
+    max: number;
+}
+
+export interface PortfolioDiagnosis {
+    portfolio: Portfolio;
+    total_score: number;
+    max_score: number;
+    grade: string;
+    dimensions: PortfolioDiagnosisDimension[];
+    recommendations: string[];
+    analyzed_at: string;
+}
+
+export interface RebalanceSuggestion {
+    asset_code: string | null;
+    asset_name: string;
+    action: string;
+    reason: string;
+    priority: string;
+}
+
+export interface PortfolioSummaryNew {
+    portfolio: Portfolio;
+    total_value: number;
+    total_cost: number;
+    total_pnl: number;
+    total_pnl_pct: number;
+    positions_count: number;
+    positions: UnifiedPosition[];
+    allocation: {
+        by_type: Record<string, number>;
+        by_sector: Record<string, number>;
+    };
+}
+
+export interface PortfolioSnapshot {
+    id: number;
+    portfolio_id: number;
+    snapshot_date: string;
+    total_value: number;
+    total_cost: number;
+    daily_pnl?: number;
+    daily_pnl_pct?: number;
+    cumulative_pnl?: number;
+    cumulative_pnl_pct?: number;
+    benchmark_value?: number;
+    benchmark_return_pct?: number;
+    allocation?: Record<string, any>;
+}
+
+// --- Portfolio CRUD ---
+
+export const fetchPortfolios = async (): Promise<{ portfolios: Portfolio[] }> => {
+    const response = await api.get('/portfolios');
+    return response.data;
+};
+
+export const fetchDefaultPortfolio = async (): Promise<Portfolio> => {
+    const response = await api.get('/portfolios/default');
+    return response.data;
+};
+
+export const fetchPortfolioById = async (portfolioId: number): Promise<Portfolio> => {
+    const response = await api.get(`/portfolios/${portfolioId}`);
+    return response.data;
+};
+
+export const createPortfolio = async (data: PortfolioCreateData): Promise<{ id: number; message: string }> => {
+    const response = await api.post('/portfolios', data);
+    return response.data;
+};
+
+export const updatePortfolio = async (portfolioId: number, data: Partial<PortfolioCreateData>): Promise<{ message: string }> => {
+    const response = await api.put(`/portfolios/${portfolioId}`, data);
+    return response.data;
+};
+
+export const deletePortfolio = async (portfolioId: number): Promise<{ message: string }> => {
+    const response = await api.delete(`/portfolios/${portfolioId}`);
+    return response.data;
+};
+
+export const setDefaultPortfolio = async (portfolioId: number): Promise<{ message: string }> => {
+    const response = await api.post(`/portfolios/${portfolioId}/set-default`);
+    return response.data;
+};
+
+// --- Unified Positions ---
+
+export const fetchPortfolioPositionsNew = async (
+    portfolioId: number,
+    assetType?: string
+): Promise<{ positions: UnifiedPosition[]; portfolio: Portfolio }> => {
+    const params: Record<string, string> = {};
+    if (assetType) params.asset_type = assetType;
+    const response = await api.get(`/portfolios/${portfolioId}/positions`, { params });
+    return response.data;
+};
+
+export const createUnifiedPosition = async (
+    portfolioId: number,
+    data: UnifiedPositionCreateData
+): Promise<{ id: number; message: string }> => {
+    const response = await api.post(`/portfolios/${portfolioId}/positions`, data);
+    return response.data;
+};
+
+export const deleteUnifiedPosition = async (
+    portfolioId: number,
+    positionId: number
+): Promise<{ message: string }> => {
+    const response = await api.delete(`/portfolios/${portfolioId}/positions/${positionId}`);
+    return response.data;
+};
+
+// --- Transactions ---
+
+export const fetchTransactions = async (
+    portfolioId: number,
+    assetType?: string,
+    limit: number = 100,
+    offset: number = 0
+): Promise<{ transactions: Transaction[]; portfolio: Portfolio }> => {
+    const params: Record<string, any> = { limit, offset };
+    if (assetType) params.asset_type = assetType;
+    const response = await api.get(`/portfolios/${portfolioId}/transactions`, { params });
+    return response.data;
+};
+
+export const createTransaction = async (
+    portfolioId: number,
+    data: TransactionCreateData
+): Promise<{ id: number; message: string }> => {
+    const response = await api.post(`/portfolios/${portfolioId}/transactions`, data);
+    return response.data;
+};
+
+export const deleteTransaction = async (
+    portfolioId: number,
+    transactionId: number
+): Promise<{ message: string }> => {
+    const response = await api.delete(`/portfolios/${portfolioId}/transactions/${transactionId}`);
+    return response.data;
+};
+
+export const recalculatePosition = async (
+    portfolioId: number,
+    positionId: number
+): Promise<{ position: UnifiedPosition; message: string }> => {
+    const response = await api.post(`/portfolios/${portfolioId}/positions/${positionId}/recalculate`);
+    return response.data;
+};
+
+// --- Portfolio Analysis ---
+
+export const fetchPortfolioSummaryNew = async (portfolioId: number): Promise<PortfolioSummaryNew> => {
+    const response = await api.get(`/portfolios/${portfolioId}/summary`);
+    return response.data;
+};
+
+export const fetchPortfolioPerformance = async (
+    portfolioId: number,
+    startDate?: string,
+    endDate?: string
+): Promise<{ portfolio: Portfolio; snapshots: PortfolioSnapshot[] }> => {
+    const params: Record<string, string> = {};
+    if (startDate) params.start_date = startDate;
+    if (endDate) params.end_date = endDate;
+    const response = await api.get(`/portfolios/${portfolioId}/performance`, { params });
+    return response.data;
+};
+
+export const fetchPortfolioRiskMetrics = async (portfolioId: number): Promise<any> => {
+    const response = await api.get(`/portfolios/${portfolioId}/risk-metrics`);
+    return response.data;
+};
+
+export const fetchPortfolioBenchmark = async (
+    portfolioId: number,
+    days: number = 30
+): Promise<any> => {
+    const response = await api.get(`/portfolios/${portfolioId}/benchmark`, { params: { days } });
+    return response.data;
+};
+
+// --- Portfolio AI ---
+
+export const fetchPortfolioDiagnosis = async (portfolioId: number): Promise<PortfolioDiagnosis> => {
+    const response = await api.get(`/portfolios/${portfolioId}/ai-diagnosis`);
+    return response.data;
+};
+
+export const fetchRebalanceSuggestions = async (
+    portfolioId: number,
+    riskPreference: string = 'moderate'
+): Promise<{ portfolio: Portfolio; current_allocation: Record<string, number>; suggestions: RebalanceSuggestion[]; generated_at: string }> => {
+    const response = await api.post(`/portfolios/${portfolioId}/ai-rebalance`, { risk_preference: riskPreference });
+    return response.data;
+};
+
+export const portfolioAIChat = async (
+    portfolioId: number,
+    message: string,
+    context?: Record<string, any>
+): Promise<any> => {
+    const response = await api.post(`/portfolios/${portfolioId}/ai-chat`, { message, context });
+    return response.data;
+};
+
+// --- Alerts ---
+
+export const fetchPortfolioAlerts = async (
+    portfolioId: number,
+    unreadOnly: boolean = false,
+    limit: number = 50
+): Promise<{ alerts: PortfolioAlert[]; unread_count: number }> => {
+    const response = await api.get(`/portfolios/${portfolioId}/alerts`, {
+        params: { unread_only: unreadOnly, limit }
+    });
+    return response.data;
+};
+
+export const fetchAllAlerts = async (
+    unreadOnly: boolean = false,
+    limit: number = 50
+): Promise<{ alerts: PortfolioAlert[]; unread_count: number }> => {
+    const response = await api.get('/alerts', {
+        params: { unread_only: unreadOnly, limit }
+    });
+    return response.data;
+};
+
+export const markAlertRead = async (alertId: number): Promise<{ message: string }> => {
+    const response = await api.post(`/alerts/${alertId}/read`);
+    return response.data;
+};
+
+export const dismissAlertApi = async (alertId: number): Promise<{ message: string }> => {
+    const response = await api.post(`/alerts/${alertId}/dismiss`);
+    return response.data;
+};
+
+// --- DIP Plans ---
+
+export const fetchDIPPlans = async (
+    portfolioId: number,
+    activeOnly: boolean = false
+): Promise<{ dip_plans: DIPPlan[]; portfolio: Portfolio }> => {
+    const response = await api.get(`/portfolios/${portfolioId}/dip-plans`, {
+        params: { active_only: activeOnly }
+    });
+    return response.data;
+};
+
+export const createDIPPlan = async (
+    portfolioId: number,
+    data: DIPPlanCreateData
+): Promise<{ id: number; message: string }> => {
+    const response = await api.post(`/portfolios/${portfolioId}/dip-plans`, data);
+    return response.data;
+};
+
+export const fetchDIPPlan = async (
+    portfolioId: number,
+    planId: number
+): Promise<DIPPlan> => {
+    const response = await api.get(`/portfolios/${portfolioId}/dip-plans/${planId}`);
+    return response.data;
+};
+
+export const updateDIPPlan = async (
+    portfolioId: number,
+    planId: number,
+    data: Partial<DIPPlanCreateData>
+): Promise<{ message: string }> => {
+    const response = await api.put(`/portfolios/${portfolioId}/dip-plans/${planId}`, data);
+    return response.data;
+};
+
+export const deleteDIPPlan = async (
+    portfolioId: number,
+    planId: number
+): Promise<{ message: string }> => {
+    const response = await api.delete(`/portfolios/${portfolioId}/dip-plans/${planId}`);
+    return response.data;
+};
+
+export const executeDIPPlan = async (
+    portfolioId: number,
+    planId: number,
+    price?: number
+): Promise<{ message: string; transaction_id: number; shares: number; price: number }> => {
+    const params: Record<string, any> = {};
+    if (price) params.price = price;
+    const response = await api.post(`/portfolios/${portfolioId}/dip-plans/${planId}/execute`, null, { params });
+    return response.data;
+};
+
+// --- Data Migration ---
+
+export const migrateOldPositions = async (portfolioId: number): Promise<{ message: string; migrated_count: number }> => {
+    const response = await api.post(`/portfolios/${portfolioId}/migrate-positions`);
+    return response.data;
+};
+
+// --- Portfolio Advanced Analytics (Institutional-Grade) ---
+
+// Stress Test Types
+export interface StressTestScenario {
+    id: string;
+    name: string;
+    description: string;
+    category: string;
+    icon: string;
+}
+
+export interface StressTestSlider {
+    id: string;
+    name: string;
+    min: number;
+    max: number;
+    step: number;
+    default: number;
+    unit: string;
+    description: string;
+}
+
+export interface StressTestLoser {
+    code: string;
+    name: string;
+    current_value: number;
+    weight: number;
+    impact_pct: number;
+    projected_change: number;
+    projected_value: number;
+}
+
+export interface StressTestResult {
+    scenario: Record<string, any>;
+    scenario_name?: string;
+    portfolio_value: number;
+    projected_pnl: number;
+    projected_pnl_pct: number;
+    projected_value: number;
+    var_95: number;
+    var_95_pct: number;
+    cvar_95: number;
+    top_losers: StressTestLoser[];
+    top_gainers: StressTestLoser[];
+    position_impacts: StressTestLoser[];
+    risk_level: string;
+    computed_at: string;
+}
+
+// Correlation Types
+export interface CorrelationDataPoint {
+    x: number;
+    y: number;
+    value: number;
+    row_code: string;
+    col_code: string;
+    row_name: string;
+    col_name: string;
+}
+
+export interface HighCorrelationPair {
+    pair: [string, string];
+    pair_names: [string, string];
+    correlation: number;
+    risk_level: string;
+    message: string;
+}
+
+export interface CorrelationInterpretation {
+    type: string;
+    title: string;
+    content: string;
+    severity: string;
+}
+
+export interface CorrelationResult {
+    matrix: CorrelationDataPoint[];
+    labels: string[];
+    codes: string[];
+    size: number;
+    high_correlations: HighCorrelationPair[];
+    diversification_score: number;
+    diversification_status: string;
+    interpretations: CorrelationInterpretation[];
+    analysis_days: number;
+    computed_at: string;
+    message?: string;
+}
+
+// Signal Types
+export interface SignalFactor {
+    name: string;
+    signal: string;
+    weight: number;
+    details: string;
+}
+
+export interface PortfolioSignal {
+    code: string;
+    name: string;
+    signal_type: 'opportunity' | 'risk' | 'neutral';
+    strength: number;
+    reasons: string[];
+    details: Record<string, any>;
+    summary: string;
+    action_suggestion: string;
+}
+
+export interface PortfolioSignalDetail extends PortfolioSignal {
+    explanation: string;
+    confidence: 'high' | 'medium' | 'low';
+    factors: SignalFactor[];
+    generated_at: string;
+}
+
+export interface SignalsResult {
+    signals: PortfolioSignal[];
+    counts: {
+        opportunity: number;
+        risk: number;
+        neutral: number;
+    };
+    total: number;
+    generated_at: string;
+}
+
+// Risk Summary Types
+export interface RiskSummary {
+    beta: number | null;
+    beta_status: string;
+    sharpe_ratio: number | null;
+    sharpe_status: string;
+    var_95: number | null;
+    var_95_pct: number | null;
+    volatility: number | null;
+    max_drawdown: number | null;
+    health_score: number;
+    health_grade: string;
+    total_value: number;
+    position_count: number;
+    analysis_days: number;
+    message?: string;
+    computed_at: string;
+}
+
+// Sparkline Types
+export interface SparklineData {
+    portfolio_id: number;
+    values: number[];
+    dates: string[];
+    change: number;
+    change_pct: number;
+    trend: 'up' | 'down' | 'flat';
+    days: number;
+}
+
+// Stress Test APIs
+export const fetchStressTestScenarios = async (portfolioId: number): Promise<{
+    scenarios: StressTestScenario[];
+    sliders: StressTestSlider[];
+}> => {
+    const response = await api.get(`/portfolios/${portfolioId}/stress-test/scenarios`);
+    return response.data;
+};
+
+export const runStressTest = async (
+    portfolioId: number,
+    params: {
+        scenario_type?: string;
+        scenario?: Record<string, number>;
+    }
+): Promise<StressTestResult> => {
+    const response = await api.post(`/portfolios/${portfolioId}/stress-test`, params);
+    return response.data;
+};
+
+// Correlation API
+export const fetchPortfolioCorrelation = async (
+    portfolioId: number,
+    days: number = 90
+): Promise<CorrelationResult> => {
+    const response = await api.get(`/portfolios/${portfolioId}/correlation`, {
+        params: { days }
+    });
+    return response.data;
+};
+
+// Signals APIs
+export const fetchPortfolioSignals = async (portfolioId: number): Promise<SignalsResult> => {
+    const response = await api.get(`/portfolios/${portfolioId}/signals`);
+    return response.data;
+};
+
+export const fetchSignalDetail = async (
+    portfolioId: number,
+    assetCode: string
+): Promise<PortfolioSignalDetail> => {
+    const response = await api.get(`/portfolios/${portfolioId}/signals/${assetCode}`);
+    return response.data;
+};
+
+// Risk Summary API
+export const fetchRiskSummary = async (portfolioId: number): Promise<RiskSummary> => {
+    const response = await api.get(`/portfolios/${portfolioId}/risk-summary`);
+    return response.data;
+};
+
+// Sparkline API
+export const fetchPortfolioSparkline = async (
+    portfolioId: number,
+    days: number = 7
+): Promise<SparklineData> => {
+    const response = await api.get(`/portfolios/${portfolioId}/sparkline`, {
+        params: { days }
+    });
+    return response.data;
+};

@@ -1,92 +1,205 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Box,
   Typography,
-  Paper,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
   IconButton,
   Button,
-  Chip,
   CircularProgress,
   Alert,
-  Grid,
+  Tabs,
+  Tab,
   Tooltip,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  TextField,
-  Autocomplete,
+  Snackbar,
+  Paper,
+  useTheme,
+  alpha,
 } from '@mui/material';
-import AccountBalanceWalletIcon from '@mui/icons-material/AccountBalanceWallet';
+import Grid from '@mui/material/Grid';
 import AddIcon from '@mui/icons-material/Add';
-import EditIcon from '@mui/icons-material/Edit';
-import DeleteIcon from '@mui/icons-material/Delete';
 import RefreshIcon from '@mui/icons-material/Refresh';
-import TrendingUpIcon from '@mui/icons-material/TrendingUp';
-import TrendingDownIcon from '@mui/icons-material/TrendingDown';
-import WarningAmberIcon from '@mui/icons-material/WarningAmber';
-import SearchIcon from '@mui/icons-material/Search';
-import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip } from 'recharts';
+import ReceiptIcon from '@mui/icons-material/Receipt';
+import DataMigrationIcon from '@mui/icons-material/CloudSync';
+import PieChartIcon from '@mui/icons-material/PieChart';
+import GridViewIcon from '@mui/icons-material/GridView';
 import {
-  fetchPortfolioPositions,
-  fetchPortfolioSummary,
-  fetchPortfolioOverlap,
-  createPosition,
-  updatePosition,
-  deletePosition,
-  searchMarketFunds,
+  fetchPortfolios,
+  fetchDefaultPortfolio,
+  fetchPortfolioSummaryNew,
+  fetchTransactions,
+  fetchPortfolioAlerts,
+  fetchPortfolioDiagnosis,
+  fetchRebalanceSuggestions,
+  fetchDIPPlans,
+  createPortfolio,
+  deletePortfolio,
+  setDefaultPortfolio,
+  createTransaction,
+  deleteTransaction,
+  deleteUnifiedPosition,
+  recalculatePosition,
+  markAlertRead,
+  dismissAlertApi,
+  createDIPPlan,
+  deleteDIPPlan,
+  updateDIPPlan,
+  executeDIPPlan,
+  migrateOldPositions,
+  // New institutional-grade APIs
+  fetchStressTestScenarios,
+  runStressTest,
+  fetchPortfolioCorrelation,
+  fetchPortfolioSignals,
+  fetchSignalDetail,
+  fetchRiskSummary,
+  fetchPortfolioSparkline,
 } from '../api';
-import type { PortfolioPosition, PortfolioSummaryResponse, PortfolioOverlapResponse, MarketFund } from '../api';
-import PositionForm from '../components/fund/PositionForm';
-import type { PositionFormData } from '../components/fund/PositionForm';
+import type {
+  Portfolio,
+  UnifiedPosition,
+  Transaction,
+  PortfolioAlert,
+  PortfolioDiagnosis,
+  RebalanceSuggestion,
+  DIPPlan,
+  PortfolioCreateData,
+  StressTestScenario,
+  StressTestSlider,
+  StressTestResult,
+  CorrelationResult,
+  PortfolioSignal,
+  PortfolioSignalDetail,
+  RiskSummary,
+  SparklineData,
+} from '../api';
+import {
+  PortfolioSwitcher,
+  AllocationPieChart,
+  TransactionForm,
+  TransactionHistory,
+  AssetSearchDialog,
+  PortfolioDiagnosisCard,
+  RebalanceSuggestions,
+  AlertBanner,
+  DIPPlanCard,
+  DIPPlanForm,
+  // New institutional-grade components
+  PortfolioHeader,
+  StressTestSandbox,
+  CorrelationHeatmap,
+  SmartPositionTable,
+} from '../components/portfolio';
+import type { TransactionFormData, DIPPlanFormData } from '../components/portfolio';
 
-const COLORS = ['#3b82f6', '#22c55e', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16'];
+type TabValue = 'overview' | 'transactions' | 'dip';
+type RightPanelTab = 'correlation' | 'allocation';
 
-export default function Portfolio() {
+export default function PortfolioPage() {
   const { t } = useTranslation();
-  const [positions, setPositions] = useState<PortfolioPosition[]>([]);
-  const [summary, setSummary] = useState<PortfolioSummaryResponse | null>(null);
-  const [overlap, setOverlap] = useState<PortfolioOverlapResponse | null>(null);
+  const theme = useTheme();
+
+  // State - Core data
+  const [portfolios, setPortfolios] = useState<Portfolio[]>([]);
+  const [currentPortfolio, setCurrentPortfolio] = useState<Portfolio | null>(null);
+  const [positions, setPositions] = useState<UnifiedPosition[]>([]);
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [alerts, setAlerts] = useState<PortfolioAlert[]>([]);
+  const [diagnosis, setDiagnosis] = useState<PortfolioDiagnosis | null>(null);
+  const [rebalanceSuggestions, setRebalanceSuggestions] = useState<RebalanceSuggestion[]>([]);
+  const [currentAllocation, setCurrentAllocation] = useState<Record<string, number>>({});
+  const [dipPlans, setDIPPlans] = useState<DIPPlan[]>([]);
+
+  // State - New institutional-grade data
+  const [riskSummary, setRiskSummary] = useState<RiskSummary | null>(null);
+  const [sparklineData, setSparklineData] = useState<SparklineData | null>(null);
+  const [stressTestScenarios, setStressTestScenarios] = useState<StressTestScenario[]>([]);
+  const [stressTestSliders, setStressTestSliders] = useState<StressTestSlider[]>([]);
+  const [correlationData, setCorrelationData] = useState<CorrelationResult | null>(null);
+  const [signals, setSignals] = useState<PortfolioSignal[]>([]);
+
+  // Summary state
+  const [summary, setSummary] = useState({
+    totalValue: 0,
+    totalCost: 0,
+    totalPnl: 0,
+    totalPnlPct: 0,
+    positionsCount: 0,
+    allocationByType: {} as Record<string, number>,
+    allocationBySector: {} as Record<string, number>,
+  });
+
+  // UI state
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [tab, setTab] = useState<TabValue>('overview');
+  const [rightPanelTab, setRightPanelTab] = useState<RightPanelTab>('correlation');
+  const [diagnosisLoading, setDiagnosisLoading] = useState(false);
+  const [riskLoading, setRiskLoading] = useState(false);
+  const [correlationLoading, setCorrelationLoading] = useState(false);
+  const [signalsLoading, setSignalsLoading] = useState(false);
+  const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: 'success' | 'error' }>({
+    open: false,
+    message: '',
+    severity: 'success',
+  });
 
-  // Position form state
-  const [formOpen, setFormOpen] = useState(false);
-  const [editingPosition, setEditingPosition] = useState<PortfolioPosition | null>(null);
-  const [selectedFund, setSelectedFund] = useState<{ code: string; name: string } | null>(null);
-
-  // Fund search dialog state
+  // Dialog state
   const [searchDialogOpen, setSearchDialogOpen] = useState(false);
-  const [searchResults, setSearchResults] = useState<MarketFund[]>([]);
-  const [searching, setSearching] = useState(false);
-  const [searchInput, setSearchInput] = useState('');
+  const [transactionFormOpen, setTransactionFormOpen] = useState(false);
+  const [dipFormOpen, setDIPFormOpen] = useState(false);
+  const [selectedAsset, setSelectedAsset] = useState<{
+    code: string;
+    name: string;
+    type: 'stock' | 'fund';
+    sector?: string;
+  } | null>(null);
 
-  const loadData = async () => {
+  // Load portfolios on mount
+  useEffect(() => {
+    loadPortfolios();
+  }, []);
+
+  // Load portfolio data when current portfolio changes
+  useEffect(() => {
+    if (currentPortfolio) {
+      loadPortfolioData(currentPortfolio.id);
+      loadInstitutionalData(currentPortfolio.id);
+    }
+  }, [currentPortfolio?.id]);
+
+  const loadPortfolios = async () => {
+    try {
+      const [portfoliosRes, defaultRes] = await Promise.all([
+        fetchPortfolios(),
+        fetchDefaultPortfolio(),
+      ]);
+      setPortfolios(portfoliosRes.portfolios);
+      setCurrentPortfolio(defaultRes);
+    } catch (err: any) {
+      setError(err.message || t('portfolio.error_load'));
+    }
+  };
+
+  const loadPortfolioData = async (portfolioId: number) => {
     setLoading(true);
     setError(null);
     try {
-      const [positionsRes, summaryRes] = await Promise.all([
-        fetchPortfolioPositions(),
-        fetchPortfolioSummary(),
+      const [summaryRes, alertsRes] = await Promise.all([
+        fetchPortfolioSummaryNew(portfolioId),
+        fetchPortfolioAlerts(portfolioId, true),
       ]);
-      setPositions(positionsRes.positions || []);
-      setSummary(summaryRes);
 
-      // Load overlap analysis if we have positions
-      if (positionsRes.positions?.length >= 2) {
-        try {
-          const overlapRes = await fetchPortfolioOverlap();
-          setOverlap(overlapRes);
-        } catch (err) {
-          console.log('Overlap analysis not available');
-        }
-      }
+      setPositions(summaryRes.positions || []);
+      setSummary({
+        totalValue: summaryRes.total_value,
+        totalCost: summaryRes.total_cost,
+        totalPnl: summaryRes.total_pnl,
+        totalPnlPct: summaryRes.total_pnl_pct,
+        positionsCount: summaryRes.positions_count,
+        allocationByType: summaryRes.allocation?.by_type || {},
+        allocationBySector: summaryRes.allocation?.by_sector || {},
+      });
+      setAlerts(alertsRes.alerts);
     } catch (err: any) {
       setError(err.message || t('portfolio.error_load'));
     } finally {
@@ -94,71 +207,261 @@ export default function Portfolio() {
     }
   };
 
-  useEffect(() => {
-    loadData();
-  }, []);
+  // Load institutional-grade data
+  const loadInstitutionalData = async (portfolioId: number) => {
+    // Load risk summary and sparkline
+    setRiskLoading(true);
+    try {
+      const [riskRes, sparklineRes, scenariosRes] = await Promise.all([
+        fetchRiskSummary(portfolioId),
+        fetchPortfolioSparkline(portfolioId, 7),
+        fetchStressTestScenarios(portfolioId),
+      ]);
+      setRiskSummary(riskRes);
+      setSparklineData(sparklineRes);
+      setStressTestScenarios(scenariosRes.scenarios);
+      setStressTestSliders(scenariosRes.sliders);
+    } catch (err) {
+      console.error('Failed to load risk data:', err);
+    } finally {
+      setRiskLoading(false);
+    }
 
-  const handleAddPosition = (fund: { code: string; name: string }) => {
-    setSelectedFund(fund);
-    setEditingPosition(null);
-    setSearchDialogOpen(false);
-    setFormOpen(true);
+    // Load correlation data
+    loadCorrelation(portfolioId);
+
+    // Load signals
+    loadSignals(portfolioId);
   };
 
-  // Search for funds
-  const handleSearch = async (query: string) => {
-    if (query.length < 2) return;
-    setSearching(true);
+  const loadCorrelation = async (portfolioId: number) => {
+    setCorrelationLoading(true);
     try {
-      const results = await searchMarketFunds(query);
-      setSearchResults(results);
-    } catch (error) {
-      console.error('Search failed:', error);
+      const res = await fetchPortfolioCorrelation(portfolioId, 90);
+      setCorrelationData(res);
+    } catch (err) {
+      console.error('Failed to load correlation:', err);
     } finally {
-      setSearching(false);
+      setCorrelationLoading(false);
     }
   };
 
-  // Open search dialog
-  const handleOpenSearchDialog = () => {
-    setSearchResults([]);
-    setSearchInput('');
-    setSearchDialogOpen(true);
+  const loadSignals = async (portfolioId: number) => {
+    setSignalsLoading(true);
+    try {
+      const res = await fetchPortfolioSignals(portfolioId);
+      setSignals(res.signals);
+    } catch (err) {
+      console.error('Failed to load signals:', err);
+    } finally {
+      setSignalsLoading(false);
+    }
   };
 
-  const handleEditPosition = (position: PortfolioPosition) => {
-    setSelectedFund({ code: position.fund_code, name: position.fund_name || '' });
-    setEditingPosition(position);
-    setFormOpen(true);
+  const loadTransactions = useCallback(async () => {
+    if (!currentPortfolio) return;
+    try {
+      const res = await fetchTransactions(currentPortfolio.id, undefined, 100, 0);
+      setTransactions(res.transactions);
+    } catch (err: any) {
+      console.error('Failed to load transactions:', err);
+    }
+  }, [currentPortfolio?.id]);
+
+  const loadDIPPlans = useCallback(async () => {
+    if (!currentPortfolio) return;
+    try {
+      const res = await fetchDIPPlans(currentPortfolio.id);
+      setDIPPlans(res.dip_plans);
+    } catch (err: any) {
+      console.error('Failed to load DIP plans:', err);
+    }
+  }, [currentPortfolio?.id]);
+
+  const loadDiagnosis = useCallback(async () => {
+    if (!currentPortfolio) return;
+    setDiagnosisLoading(true);
+    try {
+      const [diagRes, rebalanceRes] = await Promise.all([
+        fetchPortfolioDiagnosis(currentPortfolio.id),
+        fetchRebalanceSuggestions(currentPortfolio.id),
+      ]);
+      setDiagnosis(diagRes);
+      setRebalanceSuggestions(rebalanceRes.suggestions);
+      setCurrentAllocation(rebalanceRes.current_allocation);
+    } catch (err: any) {
+      console.error('Failed to load diagnosis:', err);
+    } finally {
+      setDiagnosisLoading(false);
+    }
+  }, [currentPortfolio?.id]);
+
+  // Load tab-specific data
+  useEffect(() => {
+    if (tab === 'transactions') {
+      loadTransactions();
+    } else if (tab === 'dip') {
+      loadDIPPlans();
+    }
+  }, [tab, loadTransactions, loadDIPPlans]);
+
+  // Handlers
+  const handleSwitchPortfolio = (portfolioId: number) => {
+    const portfolio = portfolios.find((p) => p.id === portfolioId);
+    if (portfolio) {
+      setCurrentPortfolio(portfolio);
+      setDiagnosis(null);
+      setRebalanceSuggestions([]);
+      setRiskSummary(null);
+      setCorrelationData(null);
+      setSignals([]);
+    }
+  };
+
+  const handleCreatePortfolio = async (data: PortfolioCreateData) => {
+    await createPortfolio(data);
+    await loadPortfolios();
+    showSnackbar(t('common.created'), 'success');
+  };
+
+  const handleDeletePortfolio = async (portfolioId: number) => {
+    await deletePortfolio(portfolioId);
+    await loadPortfolios();
+    showSnackbar(t('common.deleted'), 'success');
+  };
+
+  const handleSetDefault = async (portfolioId: number) => {
+    await setDefaultPortfolio(portfolioId);
+    await loadPortfolios();
+    showSnackbar(t('common.saved'), 'success');
+  };
+
+  const handleAssetSelect = (asset: { code: string; name: string; type: 'stock' | 'fund'; sector?: string }) => {
+    setSelectedAsset(asset);
+    setSearchDialogOpen(false);
+    setTransactionFormOpen(true);
+  };
+
+  const handleCreateTransaction = async (data: TransactionFormData) => {
+    if (!currentPortfolio) return;
+    await createTransaction(currentPortfolio.id, data);
+    await loadPortfolioData(currentPortfolio.id);
+    await loadInstitutionalData(currentPortfolio.id);
+    if (tab === 'transactions') {
+      await loadTransactions();
+    }
+    showSnackbar(t('portfolio.add_transaction') + ' - ' + t('common.success'), 'success');
+  };
+
+  const handleDeleteTransaction = async (transactionId: number) => {
+    if (!currentPortfolio) return;
+    if (!window.confirm(t('portfolio.confirm_delete'))) return;
+    await deleteTransaction(currentPortfolio.id, transactionId);
+    await loadTransactions();
+    showSnackbar(t('common.deleted'), 'success');
   };
 
   const handleDeletePosition = async (positionId: number) => {
+    if (!currentPortfolio) return;
     if (!window.confirm(t('portfolio.confirm_delete'))) return;
+    await deleteUnifiedPosition(currentPortfolio.id, positionId);
+    await loadPortfolioData(currentPortfolio.id);
+    await loadInstitutionalData(currentPortfolio.id);
+    showSnackbar(t('common.deleted'), 'success');
+  };
+
+  const handleRecalculatePosition = async (positionId: number) => {
+    if (!currentPortfolio) return;
+    await recalculatePosition(currentPortfolio.id, positionId);
+    await loadPortfolioData(currentPortfolio.id);
+    showSnackbar(t('portfolio.recalculate') + ' - ' + t('common.success'), 'success');
+  };
+
+  const handleMarkAlertRead = async (alertId: number) => {
+    await markAlertRead(alertId);
+    if (currentPortfolio) {
+      const alertsRes = await fetchPortfolioAlerts(currentPortfolio.id, true);
+      setAlerts(alertsRes.alerts);
+    }
+  };
+
+  const handleDismissAlert = async (alertId: number) => {
+    await dismissAlertApi(alertId);
+    if (currentPortfolio) {
+      const alertsRes = await fetchPortfolioAlerts(currentPortfolio.id, true);
+      setAlerts(alertsRes.alerts);
+    }
+  };
+
+  const handleCreateDIPPlan = async (data: DIPPlanFormData) => {
+    if (!currentPortfolio) return;
+    await createDIPPlan(currentPortfolio.id, data);
+    await loadDIPPlans();
+    showSnackbar(t('portfolio.create_dip_plan') + ' - ' + t('common.success'), 'success');
+  };
+
+  const handleDeleteDIPPlan = async (planId: number) => {
+    if (!currentPortfolio) return;
+    await deleteDIPPlan(currentPortfolio.id, planId);
+    await loadDIPPlans();
+    showSnackbar(t('common.deleted'), 'success');
+  };
+
+  const handleToggleDIPActive = async (planId: number, isActive: boolean) => {
+    if (!currentPortfolio) return;
+    await updateDIPPlan(currentPortfolio.id, planId, { is_active: isActive });
+    await loadDIPPlans();
+  };
+
+  const handleExecuteDIP = async (planId: number) => {
+    if (!currentPortfolio) return;
     try {
-      await deletePosition(positionId);
-      loadData();
+      const result = await executeDIPPlan(currentPortfolio.id, planId);
+      await loadDIPPlans();
+      await loadPortfolioData(currentPortfolio.id);
+      showSnackbar(
+        `${t('portfolio.execute_now')} - ${result.shares.toFixed(2)} ${t('portfolio.shares_unit')} @ ¥${result.price.toFixed(4)}`,
+        'success'
+      );
     } catch (err: any) {
-      setError(err.message);
+      showSnackbar(err.message || t('common.error'), 'error');
     }
   };
 
-  const handleFormSubmit = async (data: PositionFormData) => {
-    if (editingPosition) {
-      await updatePosition(editingPosition.id, data);
-    } else {
-      await createPosition(data);
+  const handleMigrateData = async () => {
+    if (!currentPortfolio) return;
+    try {
+      const result = await migrateOldPositions(currentPortfolio.id);
+      await loadPortfolioData(currentPortfolio.id);
+      showSnackbar(t('portfolio.migrate_success', { count: result.migrated_count }), 'success');
+    } catch (err: any) {
+      showSnackbar(err.message || t('common.error'), 'error');
     }
-    loadData();
   };
 
-  // Prepare allocation pie data
-  const allocationData = summary?.allocation?.map((item, idx) => ({
-    name: item.fund_name || item.fund_code,
-    value: item.weight,
-    color: COLORS[idx % COLORS.length],
-  })) || [];
+  const handleRunStressTest = async (params: { scenario_type?: string; scenario?: Record<string, number> }): Promise<StressTestResult> => {
+    if (!currentPortfolio) throw new Error('No portfolio selected');
+    return await runStressTest(currentPortfolio.id, params);
+  };
 
-  if (loading) {
+  const handleLoadSignalDetail = async (assetCode: string): Promise<PortfolioSignalDetail> => {
+    if (!currentPortfolio) throw new Error('No portfolio selected');
+    return await fetchSignalDetail(currentPortfolio.id, assetCode);
+  };
+
+  const showSnackbar = (message: string, severity: 'success' | 'error') => {
+    setSnackbar({ open: true, message, severity });
+  };
+
+  const handleRefresh = () => {
+    if (currentPortfolio) {
+      loadPortfolioData(currentPortfolio.id);
+      loadInstitutionalData(currentPortfolio.id);
+      setDiagnosis(null);
+    }
+  };
+
+  if (loading && !currentPortfolio) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: 400 }}>
         <CircularProgress />
@@ -168,16 +471,21 @@ export default function Portfolio() {
 
   return (
     <Box sx={{ p: 3 }}>
+      {/* Page Header with Portfolio Switcher */}
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
-        <Typography variant="h4" sx={{ fontWeight: 700 }}>
-          <AccountBalanceWalletIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
-          {t('portfolio.title')}
-        </Typography>
+        <PortfolioSwitcher
+          portfolios={portfolios}
+          currentPortfolio={currentPortfolio}
+          onSwitch={handleSwitchPortfolio}
+          onCreate={handleCreatePortfolio}
+          onDelete={handleDeletePortfolio}
+          onSetDefault={handleSetDefault}
+        />
         <Box sx={{ display: 'flex', gap: 1 }}>
           <Button
             variant="contained"
             startIcon={<AddIcon />}
-            onClick={handleOpenSearchDialog}
+            onClick={() => setSearchDialogOpen(true)}
             sx={{
               bgcolor: '#6366f1',
               borderRadius: '10px',
@@ -186,10 +494,15 @@ export default function Portfolio() {
               '&:hover': { bgcolor: '#4f46e5' },
             }}
           >
-            {t('portfolio.add_position')}
+            {t('portfolio.add_transaction')}
           </Button>
+          <Tooltip title={t('portfolio.migrate_desc')}>
+            <IconButton onClick={handleMigrateData}>
+              <DataMigrationIcon />
+            </IconButton>
+          </Tooltip>
           <Tooltip title={t('common.refresh')}>
-            <IconButton onClick={loadData}>
+            <IconButton onClick={handleRefresh}>
               <RefreshIcon />
             </IconButton>
           </Tooltip>
@@ -197,349 +510,233 @@ export default function Portfolio() {
       </Box>
 
       {error && (
-        <Alert severity="error" sx={{ mb: 3 }}>
+        <Alert severity="error" sx={{ mb: 3 }} onClose={() => setError(null)}>
           {error}
         </Alert>
       )}
 
-      {/* Summary Cards */}
-      {summary && (
-        <Grid container spacing={3} sx={{ mb: 3 }}>
-          <Grid size={{ xs: 12, sm: 6, md: 3 }}>
-            <Paper sx={{ p: 2 }}>
-              <Typography variant="caption" color="text.secondary">
-                {t('portfolio.total_value')}
-              </Typography>
-              <Typography variant="h5" sx={{ fontWeight: 700, fontFamily: 'JetBrains Mono' }}>
-                ¥{summary.total_value.toLocaleString('zh-CN', { minimumFractionDigits: 2 })}
-              </Typography>
-            </Paper>
-          </Grid>
-          <Grid size={{ xs: 12, sm: 6, md: 3 }}>
-            <Paper sx={{ p: 2 }}>
-              <Typography variant="caption" color="text.secondary">
-                {t('portfolio.total_cost')}
-              </Typography>
-              <Typography variant="h5" sx={{ fontWeight: 700, fontFamily: 'JetBrains Mono' }}>
-                ¥{summary.total_cost.toLocaleString('zh-CN', { minimumFractionDigits: 2 })}
-              </Typography>
-            </Paper>
-          </Grid>
-          <Grid size={{ xs: 12, sm: 6, md: 3 }}>
-            <Paper sx={{ p: 2 }}>
-              <Typography variant="caption" color="text.secondary">
-                {t('portfolio.total_pnl')}
-              </Typography>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                {summary.total_pnl >= 0 ? (
-                  <TrendingUpIcon color="success" />
-                ) : (
-                  <TrendingDownIcon color="error" />
-                )}
-                <Typography
-                  variant="h5"
-                  sx={{
-                    fontWeight: 700,
-                    fontFamily: 'JetBrains Mono',
-                    color: summary.total_pnl >= 0 ? 'success.main' : 'error.main',
-                  }}
-                >
-                  {summary.total_pnl >= 0 ? '+' : ''}
-                  ¥{summary.total_pnl.toLocaleString('zh-CN', { minimumFractionDigits: 2 })}
-                </Typography>
-              </Box>
-            </Paper>
-          </Grid>
-          <Grid size={{ xs: 12, sm: 6, md: 3 }}>
-            <Paper sx={{ p: 2 }}>
-              <Typography variant="caption" color="text.secondary">
-                {t('portfolio.pnl_pct')}
-              </Typography>
-              <Typography
-                variant="h5"
-                sx={{
-                  fontWeight: 700,
-                  fontFamily: 'JetBrains Mono',
-                  color: summary.total_pnl_pct >= 0 ? 'success.main' : 'error.main',
-                }}
-              >
-                {summary.total_pnl_pct >= 0 ? '+' : ''}
-                {summary.total_pnl_pct.toFixed(2)}%
-              </Typography>
-            </Paper>
-          </Grid>
-        </Grid>
+      {/* Alerts Banner */}
+      {alerts.length > 0 && (
+        <Box sx={{ mb: 3 }}>
+          <AlertBanner
+            alerts={alerts}
+            onDismiss={handleDismissAlert}
+            onMarkRead={handleMarkAlertRead}
+          />
+        </Box>
       )}
 
-      <Grid container spacing={3}>
-        {/* Positions Table */}
-        <Grid size={{ xs: 12, md: 8 }}>
-          <Paper sx={{ p: 2 }}>
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-              <Typography variant="h6" sx={{ fontWeight: 600 }}>
-                {t('portfolio.positions')} ({positions.length})
-              </Typography>
-            </Box>
+      {/* NEW: Enhanced Portfolio Header with Risk Metrics */}
+      <PortfolioHeader
+        totalValue={summary.totalValue}
+        totalPnl={summary.totalPnl}
+        totalPnlPct={summary.totalPnlPct}
+        sparklineData={sparklineData ? {
+          values: sparklineData.values,
+          dates: sparklineData.dates,
+          trend: sparklineData.trend,
+        } : undefined}
+        beta={riskSummary?.beta}
+        betaStatus={riskSummary?.beta_status}
+        sharpeRatio={riskSummary?.sharpe_ratio}
+        sharpeStatus={riskSummary?.sharpe_status}
+        healthScore={riskSummary?.health_score ?? 50}
+        healthGrade={riskSummary?.health_grade ?? 'N/A'}
+        loading={riskLoading}
+      />
 
-            {positions.length === 0 ? (
-              <Box sx={{ textAlign: 'center', py: 4 }}>
-                <Typography color="text.secondary" sx={{ mb: 2 }}>
-                  {t('portfolio.no_positions')}
-                </Typography>
-                <Typography variant="body2" color="text.secondary">
-                  {t('portfolio.add_from_funds')}
-                </Typography>
-              </Box>
-            ) : (
-              <TableContainer sx={{ maxHeight: 500 }}>
-                <Table size="small" stickyHeader>
-                  <TableHead>
-                    <TableRow>
-                      <TableCell>{t('portfolio.fund')}</TableCell>
-                      <TableCell align="right">{t('portfolio.shares')}</TableCell>
-                      <TableCell align="right">{t('portfolio.cost')}</TableCell>
-                      <TableCell align="right">{t('portfolio.current_nav')}</TableCell>
-                      <TableCell align="right">{t('portfolio.value')}</TableCell>
-                      <TableCell align="right">{t('portfolio.pnl')}</TableCell>
-                      <TableCell align="center">{t('common.actions')}</TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {positions.map((pos) => (
-                      <TableRow key={pos.id} hover>
-                        <TableCell>
-                          <Box>
-                            <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                              {pos.fund_name || pos.fund_code}
-                            </Typography>
-                            <Typography variant="caption" color="text.secondary">
-                              {pos.fund_code}
-                            </Typography>
-                          </Box>
-                        </TableCell>
-                        <TableCell align="right" sx={{ fontFamily: 'JetBrains Mono' }}>
-                          {pos.shares.toFixed(2)}
-                        </TableCell>
-                        <TableCell align="right" sx={{ fontFamily: 'JetBrains Mono' }}>
-                          ¥{pos.cost_basis.toFixed(4)}
-                        </TableCell>
-                        <TableCell align="right" sx={{ fontFamily: 'JetBrains Mono' }}>
-                          {pos.current_nav ? `¥${pos.current_nav.toFixed(4)}` : '-'}
-                        </TableCell>
-                        <TableCell align="right" sx={{ fontFamily: 'JetBrains Mono' }}>
-                          ¥{pos.position_value.toFixed(2)}
-                        </TableCell>
-                        <TableCell
-                          align="right"
-                          sx={{
-                            fontFamily: 'JetBrains Mono',
-                            color: pos.pnl >= 0 ? 'success.main' : 'error.main',
-                          }}
-                        >
-                          {pos.pnl >= 0 ? '+' : ''}
-                          ¥{pos.pnl.toFixed(2)}
-                          <Typography variant="caption" sx={{ display: 'block' }}>
-                            ({pos.pnl_pct >= 0 ? '+' : ''}
-                            {pos.pnl_pct.toFixed(2)}%)
-                          </Typography>
-                        </TableCell>
-                        <TableCell align="center">
-                          <IconButton size="small" onClick={() => handleEditPosition(pos)}>
-                            <EditIcon fontSize="small" />
-                          </IconButton>
-                          <IconButton size="small" color="error" onClick={() => handleDeletePosition(pos.id)}>
-                            <DeleteIcon fontSize="small" />
-                          </IconButton>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </TableContainer>
-            )}
-          </Paper>
-        </Grid>
+      {/* Tabs */}
+      <Tabs
+        value={tab}
+        onChange={(_, v) => setTab(v)}
+        sx={{
+          mb: 3,
+          '& .MuiTab-root': { textTransform: 'none', fontWeight: 600 },
+        }}
+      >
+        <Tab value="overview" label={t('portfolio.commandCenter', '投资指挥舱')} />
+        <Tab value="transactions" label={t('portfolio.transaction_history')} icon={<ReceiptIcon sx={{ fontSize: 16 }} />} iconPosition="start" />
+        <Tab value="dip" label={t('portfolio.dip_plans')} />
+      </Tabs>
 
-        {/* Allocation Pie Chart */}
-        <Grid size={{ xs: 12, md: 4 }}>
-          <Paper sx={{ p: 2, height: '100%' }}>
-            <Typography variant="h6" sx={{ fontWeight: 600, mb: 2 }}>
-              {t('portfolio.allocation')}
+      {/* Tab Content */}
+      {tab === 'overview' && (
+        <>
+          {/* T-Layout: Left Panel (2/3) + Right Panel (1/3) */}
+          <Grid container spacing={3} sx={{ mb: 3 }}>
+            {/* Left Panel: Stress Test Sandbox */}
+            <Grid size={{ xs: 12, lg: 8 }}>
+              <StressTestSandbox
+                portfolioId={currentPortfolio?.id || 0}
+                scenarios={stressTestScenarios}
+                sliders={stressTestSliders}
+                onRunStressTest={handleRunStressTest}
+              />
+            </Grid>
+
+            {/* Right Panel: Correlation Heatmap / Allocation Chart */}
+            <Grid size={{ xs: 12, lg: 4 }}>
+              <Paper
+                elevation={0}
+                sx={{
+                  p: 2,
+                  height: '100%',
+                  minHeight: 500,
+                  background: alpha(theme.palette.background.paper, 0.8),
+                  backdropFilter: 'blur(10px)',
+                  border: `1px solid ${alpha(theme.palette.divider, 0.1)}`,
+                  borderRadius: 3,
+                }}
+              >
+                {/* Right Panel Tabs */}
+                <Tabs
+                  value={rightPanelTab}
+                  onChange={(_, v) => setRightPanelTab(v)}
+                  variant="fullWidth"
+                  sx={{
+                    mb: 2,
+                    '& .MuiTab-root': {
+                      textTransform: 'none',
+                      fontSize: '0.85rem',
+                      minHeight: 36,
+                    },
+                  }}
+                >
+                  <Tab
+                    value="correlation"
+                    label={t('portfolio.correlationHeatmap', '相关性')}
+                    icon={<GridViewIcon sx={{ fontSize: 16 }} />}
+                    iconPosition="start"
+                  />
+                  <Tab
+                    value="allocation"
+                    label={t('portfolio.allocation', '配置')}
+                    icon={<PieChartIcon sx={{ fontSize: 16 }} />}
+                    iconPosition="start"
+                  />
+                </Tabs>
+
+                {rightPanelTab === 'correlation' && (
+                  <CorrelationHeatmap
+                    data={correlationData?.matrix || []}
+                    labels={correlationData?.labels || []}
+                    codes={correlationData?.codes || []}
+                    size={correlationData?.size || 0}
+                    diversificationScore={correlationData?.diversification_score || 0}
+                    diversificationStatus={correlationData?.diversification_status || 'unknown'}
+                    loading={correlationLoading}
+                    height={380}
+                  />
+                )}
+
+                {rightPanelTab === 'allocation' && (
+                  <Box sx={{ mt: 2 }}>
+                    <AllocationPieChart
+                      allocationByType={summary.allocationByType}
+                      allocationBySector={summary.allocationBySector}
+                    />
+                  </Box>
+                )}
+              </Paper>
+            </Grid>
+          </Grid>
+
+          {/* Bottom: Smart Position Table with AI Signals */}
+          <Box sx={{ mb: 3 }}>
+            <Typography variant="h6" fontWeight={600} sx={{ mb: 2 }}>
+              {t('portfolio.smartPositions', '智能持仓')}
             </Typography>
-            {allocationData.length > 0 ? (
-              <Box sx={{ height: 300 }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie
-                      data={allocationData}
-                      dataKey="value"
-                      nameKey="name"
-                      cx="50%"
-                      cy="50%"
-                      outerRadius={80}
-                      label={({ name, value }) => `${(name || '').slice(0, 6)}... ${value.toFixed(1)}%`}
-                      labelLine={{ stroke: '#64748b' }}
-                    >
-                      {allocationData.map((entry, idx) => (
-                        <Cell key={idx} fill={entry.color} />
-                      ))}
-                    </Pie>
-                    <RechartsTooltip formatter={(value: any) => `${value.toFixed(2)}%`} />
-                  </PieChart>
-                </ResponsiveContainer>
-              </Box>
-            ) : (
-              <Typography color="text.secondary" sx={{ textAlign: 'center', py: 4 }}>
-                {t('portfolio.no_allocation')}
-              </Typography>
-            )}
-          </Paper>
-        </Grid>
+            <SmartPositionTable
+              positions={positions}
+              signals={signals}
+              onDelete={handleDeletePosition}
+              onRecalculate={handleRecalculatePosition}
+              onLoadSignalDetail={handleLoadSignalDetail}
+              loading={loading || signalsLoading}
+            />
+          </Box>
 
-        {/* Holdings Overlap */}
-        {overlap && overlap.concentration_warnings?.length > 0 && (
-          <Grid size={{ xs: 12 }}>
-            <Paper sx={{ p: 2 }}>
-              <Typography variant="h6" sx={{ fontWeight: 600, mb: 2, display: 'flex', alignItems: 'center', gap: 1 }}>
-                <WarningAmberIcon color="warning" />
-                {t('portfolio.concentration_warnings')}
-              </Typography>
-              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                {overlap.concentration_warnings.map((warning: any) => (
-                  <Chip
-                    key={warning.stock_code}
-                    label={warning.message}
-                    color="warning"
-                    variant="outlined"
-                  />
-                ))}
-              </Box>
-            </Paper>
+          {/* AI Diagnosis and Rebalancing (Optional - can be toggled) */}
+          <Grid container spacing={3}>
+            <Grid size={{ xs: 12, md: 6 }}>
+              <PortfolioDiagnosisCard
+                diagnosis={diagnosis}
+                loading={diagnosisLoading}
+                onRefresh={loadDiagnosis}
+              />
+            </Grid>
+            <Grid size={{ xs: 12, md: 6 }}>
+              {(rebalanceSuggestions.length > 0 || diagnosis) && (
+                <RebalanceSuggestions
+                  suggestions={rebalanceSuggestions}
+                  currentAllocation={currentAllocation}
+                  loading={diagnosisLoading}
+                  onRefresh={loadDiagnosis}
+                />
+              )}
+            </Grid>
           </Grid>
-        )}
+        </>
+      )}
 
-        {/* Top Holdings */}
-        {overlap && overlap.aggregated_holdings?.length > 0 && (
-          <Grid size={{ xs: 12 }}>
-            <Paper sx={{ p: 2 }}>
-              <Typography variant="h6" sx={{ fontWeight: 600, mb: 2 }}>
-                {t('portfolio.top_holdings')}
-              </Typography>
-              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                {overlap.aggregated_holdings.slice(0, 20).map((holding: any) => (
-                  <Chip
-                    key={holding.stock_code}
-                    label={`${holding.stock_name} (${holding.total_weight.toFixed(1)}%)`}
-                    variant="outlined"
-                    size="small"
-                  />
-                ))}
-              </Box>
-            </Paper>
-          </Grid>
-        )}
-      </Grid>
-
-      {/* Position Form Dialog */}
-      {selectedFund && (
-        <PositionForm
-          open={formOpen}
-          onClose={() => {
-            setFormOpen(false);
-            setSelectedFund(null);
-            setEditingPosition(null);
-          }}
-          onSubmit={handleFormSubmit}
-          fundCode={selectedFund.code}
-          fundName={selectedFund.name}
-          initialData={
-            editingPosition
-              ? {
-                  fund_code: editingPosition.fund_code,
-                  fund_name: editingPosition.fund_name || '',
-                  shares: editingPosition.shares,
-                  cost_basis: editingPosition.cost_basis,
-                  purchase_date: editingPosition.purchase_date,
-                  notes: editingPosition.notes,
-                }
-              : undefined
-          }
-          mode={editingPosition ? 'edit' : 'create'}
+      {tab === 'transactions' && (
+        <TransactionHistory
+          transactions={transactions}
+          onDelete={handleDeleteTransaction}
+          loading={loading}
         />
       )}
 
-      {/* Fund Search Dialog */}
-      <Dialog
+      {tab === 'dip' && (
+        <DIPPlanCard
+          plans={dipPlans}
+          onExecute={handleExecuteDIP}
+          onDelete={handleDeleteDIPPlan}
+          onToggleActive={handleToggleDIPActive}
+          onCreate={() => setDIPFormOpen(true)}
+          loading={loading}
+        />
+      )}
+
+      {/* Dialogs */}
+      <AssetSearchDialog
         open={searchDialogOpen}
         onClose={() => setSearchDialogOpen(false)}
-        maxWidth="sm"
-        fullWidth
-        PaperProps={{ sx: { borderRadius: '16px' } }}
+        onSelect={handleAssetSelect}
+      />
+
+      <TransactionForm
+        open={transactionFormOpen}
+        onClose={() => {
+          setTransactionFormOpen(false);
+          setSelectedAsset(null);
+        }}
+        onSubmit={handleCreateTransaction}
+        assetCode={selectedAsset?.code}
+        assetName={selectedAsset?.name}
+        assetType={selectedAsset?.type}
+      />
+
+      <DIPPlanForm
+        open={dipFormOpen}
+        onClose={() => setDIPFormOpen(false)}
+        onSubmit={handleCreateDIPPlan}
+      />
+
+      {/* Snackbar */}
+      <Snackbar
+        open={snackbar.open}
+        autoHideDuration={4000}
+        onClose={() => setSnackbar((s) => ({ ...s, open: false }))}
       >
-        <DialogTitle sx={{ fontWeight: 700, borderBottom: '1px solid #f1f5f9' }}>
-          {t('portfolio.search_fund')}
-        </DialogTitle>
-        <DialogContent sx={{ pt: 3 }}>
-          <Autocomplete
-            fullWidth
-            options={searchResults}
-            getOptionLabel={(option) => `${option.code} - ${option.name}`}
-            loading={searching}
-            inputValue={searchInput}
-            onInputChange={(_, value) => {
-              setSearchInput(value);
-              if (value.length >= 2) {
-                handleSearch(value);
-              }
-            }}
-            onChange={(_, value) => {
-              if (value) {
-                handleAddPosition({ code: value.code, name: value.name });
-              }
-            }}
-            renderInput={(params) => (
-              <TextField
-                {...params}
-                label={t('portfolio.search_placeholder')}
-                placeholder={t('portfolio.search_hint')}
-                slotProps={{
-                  input: {
-                    ...params.InputProps,
-                    startAdornment: (
-                      <>
-                        <SearchIcon sx={{ color: '#94a3b8', mr: 1 }} />
-                        {params.InputProps.startAdornment}
-                      </>
-                    ),
-                    endAdornment: (
-                      <>
-                        {searching && <CircularProgress size={20} />}
-                        {params.InputProps.endAdornment}
-                      </>
-                    ),
-                  },
-                }}
-              />
-            )}
-            renderOption={(props, option) => (
-              <li {...props} key={option.code}>
-                <Box sx={{ py: 0.5 }}>
-                  <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                    {option.name}
-                  </Typography>
-                  <Typography variant="caption" color="text.secondary" sx={{ fontFamily: 'JetBrains Mono' }}>
-                    {option.code} {option.type && `· ${option.type}`}
-                  </Typography>
-                </Box>
-              </li>
-            )}
-            noOptionsText={searchInput.length < 2 ? t('portfolio.search_hint') : t('portfolio.no_results')}
-          />
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 2, textAlign: 'center' }}>
-            {t('portfolio.search_tip')}
-          </Typography>
-        </DialogContent>
-      </Dialog>
+        <Alert
+          severity={snackbar.severity}
+          onClose={() => setSnackbar((s) => ({ ...s, open: false }))}
+          sx={{ width: '100%' }}
+        >
+          {snackbar.message}
+        </Alert>
+      </Snackbar>
     </Box>
   );
 }

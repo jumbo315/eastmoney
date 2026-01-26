@@ -44,6 +44,9 @@ class ToolExecutor:
             "get_stock_news": self._get_stock_news,
             "get_hot_news": self._get_hot_news,
             "search_research_reports": self._search_research_reports,
+            "get_fund_info": self._get_fund_info,
+            "get_fund_holdings": self._get_fund_holdings,
+            "search_funds": self._search_funds,
         }
 
     def execute(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
@@ -387,6 +390,161 @@ class ToolExecutor:
                     "url": item.get("url", "")
                 }
                 for item in reports[:limit]
+            ]
+        }
+
+    def _get_fund_info(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        """Get fund information and NAV."""
+        import akshare as ak
+        import pandas as pd
+
+        fund_code = args.get("fund_code", "")
+        if not fund_code:
+            return {"error": "Missing fund_code parameter"}
+
+        # Normalize code
+        fund_code = fund_code.strip()
+
+        try:
+            # Get basic info
+            df = ak.fund_open_fund_info_em(symbol=fund_code, indicator="单位净值走势")
+
+            if df is None or df.empty:
+                return {"error": f"No NAV data found for fund {fund_code}"}
+
+            # Normalize column names
+            cols = list(df.columns)
+            if len(cols) >= 3:
+                df = df.rename(columns={
+                    cols[0]: 'date',
+                    cols[1]: 'nav',
+                    cols[2]: 'day_change',
+                })
+
+            # Sort by date descending
+            df['date'] = pd.to_datetime(df['date'], errors='coerce')
+            df = df.sort_values('date', ascending=False).reset_index(drop=True)
+
+            # Get latest NAV
+            latest = df.iloc[0] if len(df) > 0 else None
+
+            # Try to get fund name from another API
+            fund_name = ""
+            try:
+                name_df = ak.fund_name_em()
+                if name_df is not None and not name_df.empty:
+                    match = name_df[name_df['基金代码'] == fund_code]
+                    if not match.empty:
+                        fund_name = match.iloc[0].get('基金简称', '')
+            except:
+                pass
+
+            # Get performance data
+            perf = {}
+            try:
+                perf_indicators = ["近1周", "近1月", "近3月", "近6月", "近1年"]
+                for indicator in perf_indicators:
+                    try:
+                        perf_df = ak.fund_open_fund_info_em(symbol=fund_code, indicator=indicator)
+                        if perf_df is not None and not perf_df.empty:
+                            perf[indicator] = perf_df.iloc[0, 1] if len(perf_df.columns) > 1 else None
+                    except:
+                        pass
+            except:
+                pass
+
+            # Build NAV history (last 10 days)
+            nav_history = []
+            for _, row in df.head(10).iterrows():
+                nav_history.append({
+                    "date": row['date'].strftime('%Y-%m-%d') if pd.notna(row['date']) else "",
+                    "nav": float(row['nav']) if pd.notna(row['nav']) else None,
+                    "day_change": float(row['day_change']) if pd.notna(row.get('day_change')) else None
+                })
+
+            return {
+                "fund_code": fund_code,
+                "name": fund_name,
+                "nav": float(latest['nav']) if latest is not None and pd.notna(latest['nav']) else None,
+                "nav_date": latest['date'].strftime('%Y-%m-%d') if latest is not None and pd.notna(latest['date']) else None,
+                "day_change": float(latest['day_change']) if latest is not None and pd.notna(latest.get('day_change')) else None,
+                "week_change": perf.get("近1周"),
+                "month_change": perf.get("近1月"),
+                "three_month_change": perf.get("近3月"),
+                "six_month_change": perf.get("近6月"),
+                "year_change": perf.get("近1年"),
+                "nav_history": nav_history
+            }
+
+        except Exception as e:
+            return {"error": f"Failed to fetch fund info: {str(e)}"}
+
+    def _get_fund_holdings(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        """Get fund top holdings."""
+        import akshare as ak
+        import pandas as pd
+        from datetime import datetime
+
+        fund_code = args.get("fund_code", "")
+        if not fund_code:
+            return {"error": "Missing fund_code parameter"}
+
+        try:
+            year = str(datetime.now().year)
+            df = ak.fund_portfolio_hold_em(symbol=fund_code, date=year)
+
+            if df is None or df.empty:
+                # Try previous year
+                year = str(int(year) - 1)
+                df = ak.fund_portfolio_hold_em(symbol=fund_code, date=year)
+
+            if df is None or df.empty:
+                return {"error": f"No holdings data found for fund {fund_code}"}
+
+            # Convert to list of dicts
+            holdings = []
+            for _, row in df.head(10).iterrows():
+                holdings.append({
+                    "stock_code": row.get('股票代码', ''),
+                    "stock_name": row.get('股票名称', ''),
+                    "weight": row.get('占净值比例', ''),
+                    "shares": row.get('持股数', ''),
+                    "value": row.get('持仓市值', '')
+                })
+
+            return {
+                "fund_code": fund_code,
+                "report_year": year,
+                "holdings": holdings
+            }
+
+        except Exception as e:
+            return {"error": f"Failed to fetch fund holdings: {str(e)}"}
+
+    def _search_funds(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        """Search funds by name or code."""
+        from src.data_sources.akshare_api import search_funds
+
+        query = args.get("query", "")
+        limit = args.get("limit", 10)
+
+        if not query:
+            return {"error": "Missing query parameter"}
+
+        results = search_funds(query, limit=limit)
+
+        if not results:
+            return {"funds": [], "message": f"No funds found for '{query}'"}
+
+        return {
+            "query": query,
+            "funds": [
+                {
+                    "code": f.get("code", ""),
+                    "name": f.get("name", ""),
+                    "type": f.get("type", "")
+                }
+                for f in results[:limit]
             ]
         }
 

@@ -244,6 +244,158 @@ def init_db():
         )
     ''')
 
+    # 16. Create Portfolios Table (投资组合)
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS portfolios (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL REFERENCES users(id),
+            name TEXT NOT NULL,
+            description TEXT,
+            benchmark_code TEXT DEFAULT '000300.SH',
+            is_default BOOLEAN DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(user_id, name)
+        )
+    ''')
+
+    # 17. Create Unified Positions Table (股票+基金持仓)
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS positions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            portfolio_id INTEGER NOT NULL REFERENCES portfolios(id),
+            user_id INTEGER NOT NULL REFERENCES users(id),
+            asset_type TEXT NOT NULL CHECK(asset_type IN ('stock', 'fund')),
+            asset_code TEXT NOT NULL,
+            asset_name TEXT,
+            total_shares REAL NOT NULL DEFAULT 0,
+            average_cost REAL NOT NULL DEFAULT 0,
+            total_cost REAL NOT NULL DEFAULT 0,
+            current_price REAL,
+            current_value REAL,
+            unrealized_pnl REAL,
+            unrealized_pnl_pct REAL,
+            sector TEXT,
+            notes TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(portfolio_id, asset_type, asset_code)
+        )
+    ''')
+
+    # Create indexes for positions
+    c.execute('CREATE INDEX IF NOT EXISTS idx_positions_portfolio ON positions(portfolio_id)')
+    c.execute('CREATE INDEX IF NOT EXISTS idx_positions_user ON positions(user_id)')
+    c.execute('CREATE INDEX IF NOT EXISTS idx_positions_asset ON positions(asset_type, asset_code)')
+
+    # 18. Create Transactions Table (交易记录)
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS transactions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            position_id INTEGER REFERENCES positions(id),
+            portfolio_id INTEGER NOT NULL REFERENCES portfolios(id),
+            user_id INTEGER NOT NULL REFERENCES users(id),
+            asset_type TEXT NOT NULL,
+            asset_code TEXT NOT NULL,
+            asset_name TEXT,
+            transaction_type TEXT NOT NULL CHECK(
+                transaction_type IN ('buy', 'sell', 'dividend', 'split', 'transfer_in', 'transfer_out')
+            ),
+            shares REAL NOT NULL,
+            price REAL NOT NULL,
+            total_amount REAL NOT NULL,
+            fees REAL DEFAULT 0,
+            transaction_date DATE NOT NULL,
+            notes TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
+    # Create indexes for transactions
+    c.execute('CREATE INDEX IF NOT EXISTS idx_transactions_portfolio ON transactions(portfolio_id)')
+    c.execute('CREATE INDEX IF NOT EXISTS idx_transactions_user ON transactions(user_id)')
+    c.execute('CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions(transaction_date)')
+    c.execute('CREATE INDEX IF NOT EXISTS idx_transactions_position ON transactions(position_id)')
+
+    # 19. Create Portfolio Snapshots Table (组合快照/每日收益)
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS portfolio_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            portfolio_id INTEGER NOT NULL REFERENCES portfolios(id),
+            snapshot_date DATE NOT NULL,
+            total_value REAL NOT NULL,
+            total_cost REAL NOT NULL,
+            daily_pnl REAL,
+            daily_pnl_pct REAL,
+            cumulative_pnl REAL,
+            cumulative_pnl_pct REAL,
+            benchmark_value REAL,
+            benchmark_return_pct REAL,
+            allocation_json TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(portfolio_id, snapshot_date)
+        )
+    ''')
+
+    # Create indexes for snapshots
+    c.execute('CREATE INDEX IF NOT EXISTS idx_snapshots_portfolio ON portfolio_snapshots(portfolio_id)')
+    c.execute('CREATE INDEX IF NOT EXISTS idx_snapshots_date ON portfolio_snapshots(snapshot_date)')
+
+    # 20. Create Portfolio Alerts Table (风险预警)
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS portfolio_alerts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            portfolio_id INTEGER NOT NULL REFERENCES portfolios(id),
+            user_id INTEGER NOT NULL REFERENCES users(id),
+            alert_type TEXT NOT NULL,
+            severity TEXT NOT NULL CHECK(severity IN ('info', 'warning', 'critical')),
+            title TEXT NOT NULL,
+            message TEXT NOT NULL,
+            details_json TEXT,
+            is_read BOOLEAN DEFAULT 0,
+            is_dismissed BOOLEAN DEFAULT 0,
+            triggered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            read_at TIMESTAMP,
+            dismissed_at TIMESTAMP
+        )
+    ''')
+
+    # Create indexes for alerts
+    c.execute('CREATE INDEX IF NOT EXISTS idx_alerts_portfolio ON portfolio_alerts(portfolio_id)')
+    c.execute('CREATE INDEX IF NOT EXISTS idx_alerts_user ON portfolio_alerts(user_id)')
+    c.execute('CREATE INDEX IF NOT EXISTS idx_alerts_unread ON portfolio_alerts(user_id, is_read)')
+
+    # 21. Create DIP Plans Table (定投计划)
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS dip_plans (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            portfolio_id INTEGER NOT NULL REFERENCES portfolios(id),
+            user_id INTEGER NOT NULL REFERENCES users(id),
+            asset_type TEXT NOT NULL CHECK(asset_type IN ('stock', 'fund')),
+            asset_code TEXT NOT NULL,
+            asset_name TEXT,
+            amount_per_period REAL NOT NULL,
+            frequency TEXT NOT NULL CHECK(frequency IN ('daily', 'weekly', 'biweekly', 'monthly')),
+            execution_day INTEGER,
+            start_date DATE NOT NULL,
+            end_date DATE,
+            is_active BOOLEAN DEFAULT 1,
+            total_invested REAL DEFAULT 0,
+            total_shares REAL DEFAULT 0,
+            execution_count INTEGER DEFAULT 0,
+            last_executed_at TIMESTAMP,
+            next_execution_date DATE,
+            notes TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
+    # Create indexes for DIP plans
+    c.execute('CREATE INDEX IF NOT EXISTS idx_dip_plans_portfolio ON dip_plans(portfolio_id)')
+    c.execute('CREATE INDEX IF NOT EXISTS idx_dip_plans_user ON dip_plans(user_id)')
+    c.execute('CREATE INDEX IF NOT EXISTS idx_dip_plans_next ON dip_plans(next_execution_date)')
+
     # 3. Migration: Add user_id to funds if not exists
     try:
         c.execute('ALTER TABLE funds ADD COLUMN user_id INTEGER REFERENCES users(id)')
@@ -1645,3 +1797,1242 @@ def get_valuation_history(index_code: str, limit: int = 30) -> List[Dict]:
     ).fetchall()
     conn.close()
     return [dict(row) for row in rows]
+
+
+# =============================================================================
+# Portfolio Operations (投资组合管理)
+# =============================================================================
+
+def get_user_portfolios(user_id: int) -> List[Dict]:
+    """Get all portfolios for a user."""
+    if not user_id:
+        return []
+    conn = get_db_connection()
+    rows = conn.execute(
+        '''SELECT * FROM portfolios WHERE user_id = ? ORDER BY is_default DESC, updated_at DESC''',
+        (user_id,)
+    ).fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def get_portfolio_by_id(portfolio_id: int, user_id: int = None) -> Optional[Dict]:
+    """Get a portfolio by ID, optionally verifying ownership."""
+    conn = get_db_connection()
+    if user_id:
+        row = conn.execute(
+            'SELECT * FROM portfolios WHERE id = ? AND user_id = ?',
+            (portfolio_id, user_id)
+        ).fetchone()
+    else:
+        row = conn.execute(
+            'SELECT * FROM portfolios WHERE id = ?',
+            (portfolio_id,)
+        ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def get_default_portfolio(user_id: int) -> Optional[Dict]:
+    """Get the default portfolio for a user, or create one if none exists."""
+    conn = get_db_connection()
+    row = conn.execute(
+        'SELECT * FROM portfolios WHERE user_id = ? AND is_default = 1',
+        (user_id,)
+    ).fetchone()
+    conn.close()
+
+    if row:
+        return dict(row)
+
+    # Check if user has any portfolios
+    portfolios = get_user_portfolios(user_id)
+    if portfolios:
+        # Set the first one as default
+        set_default_portfolio(user_id, portfolios[0]['id'])
+        return portfolios[0]
+
+    # Create a default portfolio
+    portfolio_id = create_portfolio({
+        'name': '我的组合',
+        'description': '默认投资组合',
+        'is_default': True
+    }, user_id)
+
+    return get_portfolio_by_id(portfolio_id, user_id)
+
+
+def create_portfolio(portfolio_data: Dict, user_id: int) -> int:
+    """Create a new portfolio."""
+    if not user_id:
+        raise ValueError("user_id is required")
+
+    conn = get_db_connection()
+    c = conn.cursor()
+
+    try:
+        # If this is the default, unset other defaults
+        if portfolio_data.get('is_default'):
+            c.execute('UPDATE portfolios SET is_default = 0 WHERE user_id = ?', (user_id,))
+
+        c.execute('''
+            INSERT INTO portfolios (user_id, name, description, benchmark_code, is_default)
+            VALUES (?, ?, ?, ?, ?)
+        ''', (
+            user_id,
+            portfolio_data['name'],
+            portfolio_data.get('description', ''),
+            portfolio_data.get('benchmark_code', '000300.SH'),
+            portfolio_data.get('is_default', 0)
+        ))
+        portfolio_id = c.lastrowid
+        conn.commit()
+        return portfolio_id
+    except sqlite3.IntegrityError as e:
+        conn.close()
+        raise ValueError(f"Portfolio name already exists: {e}")
+    finally:
+        conn.close()
+
+
+def update_portfolio(portfolio_id: int, user_id: int, updates: Dict) -> bool:
+    """Update a portfolio."""
+    conn = get_db_connection()
+    c = conn.cursor()
+
+    # Verify ownership
+    exists = c.execute(
+        'SELECT id FROM portfolios WHERE id = ? AND user_id = ?',
+        (portfolio_id, user_id)
+    ).fetchone()
+
+    if not exists:
+        conn.close()
+        return False
+
+    set_clauses = []
+    params = []
+
+    allowed_fields = ['name', 'description', 'benchmark_code', 'is_default']
+    for field in allowed_fields:
+        if field in updates:
+            set_clauses.append(f'{field} = ?')
+            params.append(updates[field])
+
+    # Handle is_default specially
+    if updates.get('is_default'):
+        c.execute('UPDATE portfolios SET is_default = 0 WHERE user_id = ?', (user_id,))
+
+    if set_clauses:
+        set_clauses.append('updated_at = CURRENT_TIMESTAMP')
+        params.extend([portfolio_id, user_id])
+
+        sql = f"UPDATE portfolios SET {', '.join(set_clauses)} WHERE id = ? AND user_id = ?"
+        c.execute(sql, tuple(params))
+
+    conn.commit()
+    conn.close()
+    return True
+
+
+def delete_portfolio(portfolio_id: int, user_id: int) -> bool:
+    """Delete a portfolio and all related data."""
+    conn = get_db_connection()
+    c = conn.cursor()
+
+    # Verify ownership
+    exists = c.execute(
+        'SELECT id, is_default FROM portfolios WHERE id = ? AND user_id = ?',
+        (portfolio_id, user_id)
+    ).fetchone()
+
+    if not exists:
+        conn.close()
+        return False
+
+    # Delete related data in order
+    c.execute('DELETE FROM dip_plans WHERE portfolio_id = ?', (portfolio_id,))
+    c.execute('DELETE FROM portfolio_alerts WHERE portfolio_id = ?', (portfolio_id,))
+    c.execute('DELETE FROM portfolio_snapshots WHERE portfolio_id = ?', (portfolio_id,))
+    c.execute('DELETE FROM transactions WHERE portfolio_id = ?', (portfolio_id,))
+    c.execute('DELETE FROM positions WHERE portfolio_id = ?', (portfolio_id,))
+    c.execute('DELETE FROM portfolios WHERE id = ?', (portfolio_id,))
+
+    # If it was the default, set another as default
+    if exists['is_default']:
+        c.execute('''
+            UPDATE portfolios SET is_default = 1
+            WHERE user_id = ? AND id = (SELECT MIN(id) FROM portfolios WHERE user_id = ?)
+        ''', (user_id, user_id))
+
+    conn.commit()
+    conn.close()
+    return True
+
+
+def set_default_portfolio(user_id: int, portfolio_id: int) -> bool:
+    """Set a portfolio as the default for a user."""
+    conn = get_db_connection()
+    c = conn.cursor()
+
+    # Verify ownership
+    exists = c.execute(
+        'SELECT id FROM portfolios WHERE id = ? AND user_id = ?',
+        (portfolio_id, user_id)
+    ).fetchone()
+
+    if not exists:
+        conn.close()
+        return False
+
+    # Unset all defaults for this user
+    c.execute('UPDATE portfolios SET is_default = 0 WHERE user_id = ?', (user_id,))
+
+    # Set the new default
+    c.execute('UPDATE portfolios SET is_default = 1 WHERE id = ?', (portfolio_id,))
+
+    conn.commit()
+    conn.close()
+    return True
+
+
+# =============================================================================
+# Position Operations (统一持仓管理 - 股票+基金)
+# =============================================================================
+
+def get_portfolio_positions(portfolio_id: int, user_id: int = None, asset_type: str = None) -> List[Dict]:
+    """Get all positions for a portfolio."""
+    conn = get_db_connection()
+
+    sql = 'SELECT * FROM positions WHERE portfolio_id = ?'
+    params = [portfolio_id]
+
+    if user_id:
+        sql += ' AND user_id = ?'
+        params.append(user_id)
+
+    if asset_type:
+        sql += ' AND asset_type = ?'
+        params.append(asset_type)
+
+    sql += ' ORDER BY asset_type, COALESCE(current_value, total_cost) DESC'
+
+    rows = conn.execute(sql, tuple(params)).fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def get_position_by_asset(portfolio_id: int, asset_type: str, asset_code: str, user_id: int = None) -> Optional[Dict]:
+    """Get a specific position by asset."""
+    conn = get_db_connection()
+
+    sql = 'SELECT * FROM positions WHERE portfolio_id = ? AND asset_type = ? AND asset_code = ?'
+    params = [portfolio_id, asset_type, asset_code]
+
+    if user_id:
+        sql += ' AND user_id = ?'
+        params.append(user_id)
+
+    row = conn.execute(sql, tuple(params)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def get_unified_position_by_id(position_id: int, user_id: int = None) -> Optional[Dict]:
+    """Get a position by ID."""
+    conn = get_db_connection()
+
+    sql = 'SELECT * FROM positions WHERE id = ?'
+    params = [position_id]
+
+    if user_id:
+        sql += ' AND user_id = ?'
+        params.append(user_id)
+
+    row = conn.execute(sql, tuple(params)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def upsert_position(position_data: Dict, portfolio_id: int, user_id: int) -> int:
+    """Insert or update a position."""
+    if not user_id or not portfolio_id:
+        raise ValueError("user_id and portfolio_id are required")
+
+    conn = get_db_connection()
+    c = conn.cursor()
+
+    # Check if position exists
+    exists = c.execute(
+        '''SELECT id FROM positions
+           WHERE portfolio_id = ? AND asset_type = ? AND asset_code = ?''',
+        (portfolio_id, position_data['asset_type'], position_data['asset_code'])
+    ).fetchone()
+
+    if exists:
+        # Update existing position
+        c.execute('''
+            UPDATE positions SET
+                asset_name = ?,
+                total_shares = ?,
+                average_cost = ?,
+                total_cost = ?,
+                current_price = ?,
+                current_value = ?,
+                unrealized_pnl = ?,
+                unrealized_pnl_pct = ?,
+                sector = ?,
+                notes = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        ''', (
+            position_data.get('asset_name'),
+            position_data.get('total_shares', 0),
+            position_data.get('average_cost', 0),
+            position_data.get('total_cost', 0),
+            position_data.get('current_price'),
+            position_data.get('current_value'),
+            position_data.get('unrealized_pnl'),
+            position_data.get('unrealized_pnl_pct'),
+            position_data.get('sector'),
+            position_data.get('notes'),
+            exists['id']
+        ))
+        position_id = exists['id']
+    else:
+        # Insert new position
+        c.execute('''
+            INSERT INTO positions (
+                portfolio_id, user_id, asset_type, asset_code, asset_name,
+                total_shares, average_cost, total_cost, current_price, current_value,
+                unrealized_pnl, unrealized_pnl_pct, sector, notes
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            portfolio_id,
+            user_id,
+            position_data['asset_type'],
+            position_data['asset_code'],
+            position_data.get('asset_name'),
+            position_data.get('total_shares', 0),
+            position_data.get('average_cost', 0),
+            position_data.get('total_cost', 0),
+            position_data.get('current_price'),
+            position_data.get('current_value'),
+            position_data.get('unrealized_pnl'),
+            position_data.get('unrealized_pnl_pct'),
+            position_data.get('sector'),
+            position_data.get('notes')
+        ))
+        position_id = c.lastrowid
+
+    conn.commit()
+    conn.close()
+    return position_id
+
+
+def update_position_price(position_id: int, current_price: float, current_value: float = None,
+                          unrealized_pnl: float = None, unrealized_pnl_pct: float = None):
+    """Update position with current price and calculated values."""
+    conn = get_db_connection()
+    c = conn.cursor()
+
+    c.execute('''
+        UPDATE positions SET
+            current_price = ?,
+            current_value = ?,
+            unrealized_pnl = ?,
+            unrealized_pnl_pct = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+    ''', (current_price, current_value, unrealized_pnl, unrealized_pnl_pct, position_id))
+
+    conn.commit()
+    conn.close()
+
+
+def delete_unified_position(position_id: int, user_id: int) -> bool:
+    """Delete a position and its transactions."""
+    conn = get_db_connection()
+    c = conn.cursor()
+
+    # Verify ownership
+    exists = c.execute(
+        'SELECT id FROM positions WHERE id = ? AND user_id = ?',
+        (position_id, user_id)
+    ).fetchone()
+
+    if not exists:
+        conn.close()
+        return False
+
+    # Delete related transactions
+    c.execute('DELETE FROM transactions WHERE position_id = ?', (position_id,))
+    # Delete position
+    c.execute('DELETE FROM positions WHERE id = ?', (position_id,))
+
+    conn.commit()
+    conn.close()
+    return True
+
+
+# =============================================================================
+# Transaction Operations (交易记录管理)
+# =============================================================================
+
+def get_portfolio_transactions(portfolio_id: int, user_id: int = None,
+                               asset_type: str = None, limit: int = 100, offset: int = 0) -> List[Dict]:
+    """Get transactions for a portfolio."""
+    conn = get_db_connection()
+
+    sql = 'SELECT * FROM transactions WHERE portfolio_id = ?'
+    params = [portfolio_id]
+
+    if user_id:
+        sql += ' AND user_id = ?'
+        params.append(user_id)
+
+    if asset_type:
+        sql += ' AND asset_type = ?'
+        params.append(asset_type)
+
+    sql += ' ORDER BY transaction_date DESC, created_at DESC LIMIT ? OFFSET ?'
+    params.extend([limit, offset])
+
+    rows = conn.execute(sql, tuple(params)).fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def get_position_transactions(position_id: int, user_id: int = None) -> List[Dict]:
+    """Get all transactions for a position."""
+    conn = get_db_connection()
+
+    sql = 'SELECT * FROM transactions WHERE position_id = ?'
+    params = [position_id]
+
+    if user_id:
+        sql += ' AND user_id = ?'
+        params.append(user_id)
+
+    sql += ' ORDER BY transaction_date DESC, created_at DESC'
+
+    rows = conn.execute(sql, tuple(params)).fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def get_transaction_by_id(transaction_id: int, user_id: int = None) -> Optional[Dict]:
+    """Get a transaction by ID."""
+    conn = get_db_connection()
+
+    sql = 'SELECT * FROM transactions WHERE id = ?'
+    params = [transaction_id]
+
+    if user_id:
+        sql += ' AND user_id = ?'
+        params.append(user_id)
+
+    row = conn.execute(sql, tuple(params)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def create_transaction(tx_data: Dict, portfolio_id: int, user_id: int) -> int:
+    """Create a new transaction and update position."""
+    if not user_id or not portfolio_id:
+        raise ValueError("user_id and portfolio_id are required")
+
+    conn = get_db_connection()
+    c = conn.cursor()
+
+    # Get or create position
+    position = c.execute(
+        '''SELECT * FROM positions
+           WHERE portfolio_id = ? AND asset_type = ? AND asset_code = ?''',
+        (portfolio_id, tx_data['asset_type'], tx_data['asset_code'])
+    ).fetchone()
+
+    position_id = None
+    if position:
+        position = dict(position)
+        position_id = position['id']
+
+    # Calculate total_amount if not provided
+    total_amount = tx_data.get('total_amount')
+    if total_amount is None:
+        total_amount = tx_data['shares'] * tx_data['price']
+
+    # Insert transaction
+    c.execute('''
+        INSERT INTO transactions (
+            position_id, portfolio_id, user_id, asset_type, asset_code, asset_name,
+            transaction_type, shares, price, total_amount, fees, transaction_date, notes
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (
+        position_id,
+        portfolio_id,
+        user_id,
+        tx_data['asset_type'],
+        tx_data['asset_code'],
+        tx_data.get('asset_name'),
+        tx_data['transaction_type'],
+        tx_data['shares'],
+        tx_data['price'],
+        total_amount,
+        tx_data.get('fees', 0),
+        tx_data['transaction_date'],
+        tx_data.get('notes')
+    ))
+    transaction_id = c.lastrowid
+
+    # Update position based on transaction type
+    _update_position_from_transaction(c, portfolio_id, user_id, tx_data, transaction_id)
+
+    conn.commit()
+    conn.close()
+    return transaction_id
+
+
+def _update_position_from_transaction(cursor, portfolio_id: int, user_id: int, tx_data: Dict, transaction_id: int):
+    """Internal: Update position after a transaction."""
+    tx_type = tx_data['transaction_type']
+    shares = tx_data['shares']
+    price = tx_data['price']
+    fees = tx_data.get('fees', 0)
+
+    # Get current position
+    position = cursor.execute(
+        '''SELECT * FROM positions
+           WHERE portfolio_id = ? AND asset_type = ? AND asset_code = ?''',
+        (portfolio_id, tx_data['asset_type'], tx_data['asset_code'])
+    ).fetchone()
+
+    if tx_type in ('buy', 'transfer_in'):
+        if position:
+            position = dict(position)
+            # Update existing position
+            new_shares = position['total_shares'] + shares
+            new_cost = position['total_cost'] + (shares * price) + fees
+            new_avg_cost = new_cost / new_shares if new_shares > 0 else 0
+
+            cursor.execute('''
+                UPDATE positions SET
+                    total_shares = ?,
+                    average_cost = ?,
+                    total_cost = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            ''', (new_shares, new_avg_cost, new_cost, position['id']))
+
+            # Update transaction with position_id
+            cursor.execute('UPDATE transactions SET position_id = ? WHERE id = ?',
+                          (position['id'], transaction_id))
+        else:
+            # Create new position
+            total_cost = (shares * price) + fees
+            cursor.execute('''
+                INSERT INTO positions (
+                    portfolio_id, user_id, asset_type, asset_code, asset_name,
+                    total_shares, average_cost, total_cost
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                portfolio_id, user_id, tx_data['asset_type'], tx_data['asset_code'],
+                tx_data.get('asset_name'), shares, price, total_cost
+            ))
+            position_id = cursor.lastrowid
+            cursor.execute('UPDATE transactions SET position_id = ? WHERE id = ?',
+                          (position_id, transaction_id))
+
+    elif tx_type in ('sell', 'transfer_out'):
+        if position:
+            position = dict(position)
+            new_shares = position['total_shares'] - shares
+
+            if new_shares <= 0:
+                # Position closed
+                cursor.execute('DELETE FROM positions WHERE id = ?', (position['id'],))
+            else:
+                # Reduce position, cost basis unchanged
+                new_cost = new_shares * position['average_cost']
+                cursor.execute('''
+                    UPDATE positions SET
+                        total_shares = ?,
+                        total_cost = ?,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                ''', (new_shares, new_cost, position['id']))
+
+    elif tx_type == 'dividend':
+        # Dividend doesn't change position, just recorded
+        pass
+
+    elif tx_type == 'split':
+        # Stock split: adjust shares and cost basis
+        if position:
+            position = dict(position)
+            # shares here represents the split ratio (e.g., 2 for 2:1 split)
+            split_ratio = shares
+            new_shares = position['total_shares'] * split_ratio
+            new_avg_cost = position['average_cost'] / split_ratio
+
+            cursor.execute('''
+                UPDATE positions SET
+                    total_shares = ?,
+                    average_cost = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            ''', (new_shares, new_avg_cost, position['id']))
+
+
+def delete_transaction(transaction_id: int, user_id: int) -> bool:
+    """Delete a transaction. Note: This doesn't reverse position changes."""
+    conn = get_db_connection()
+    c = conn.cursor()
+
+    # Verify ownership
+    exists = c.execute(
+        'SELECT id FROM transactions WHERE id = ? AND user_id = ?',
+        (transaction_id, user_id)
+    ).fetchone()
+
+    if not exists:
+        conn.close()
+        return False
+
+    c.execute('DELETE FROM transactions WHERE id = ?', (transaction_id,))
+    conn.commit()
+    conn.close()
+    return True
+
+
+def recalculate_position(portfolio_id: int, asset_type: str, asset_code: str, user_id: int) -> Optional[Dict]:
+    """Recalculate position from all transactions."""
+    conn = get_db_connection()
+    c = conn.cursor()
+
+    # Get all transactions for this asset
+    transactions = c.execute('''
+        SELECT * FROM transactions
+        WHERE portfolio_id = ? AND asset_type = ? AND asset_code = ?
+        ORDER BY transaction_date, created_at
+    ''', (portfolio_id, asset_type, asset_code)).fetchall()
+
+    if not transactions:
+        # Delete position if no transactions
+        c.execute('''
+            DELETE FROM positions
+            WHERE portfolio_id = ? AND asset_type = ? AND asset_code = ?
+        ''', (portfolio_id, asset_type, asset_code))
+        conn.commit()
+        conn.close()
+        return None
+
+    total_shares = 0
+    total_cost = 0
+    asset_name = None
+
+    for tx in transactions:
+        tx = dict(tx)
+        asset_name = tx.get('asset_name') or asset_name
+        tx_type = tx['transaction_type']
+        shares = tx['shares']
+        price = tx['price']
+        fees = tx.get('fees', 0)
+
+        if tx_type in ('buy', 'transfer_in'):
+            total_shares += shares
+            total_cost += (shares * price) + fees
+        elif tx_type in ('sell', 'transfer_out'):
+            # Reduce shares, cost proportionally
+            if total_shares > 0:
+                cost_per_share = total_cost / total_shares
+                total_shares -= shares
+                total_cost = total_shares * cost_per_share
+        elif tx_type == 'split':
+            split_ratio = shares
+            total_shares *= split_ratio
+            # total_cost stays same, just more shares
+
+    if total_shares <= 0:
+        c.execute('''
+            DELETE FROM positions
+            WHERE portfolio_id = ? AND asset_type = ? AND asset_code = ?
+        ''', (portfolio_id, asset_type, asset_code))
+        conn.commit()
+        conn.close()
+        return None
+
+    average_cost = total_cost / total_shares if total_shares > 0 else 0
+
+    # Upsert position
+    c.execute('''
+        INSERT INTO positions (
+            portfolio_id, user_id, asset_type, asset_code, asset_name,
+            total_shares, average_cost, total_cost
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(portfolio_id, asset_type, asset_code) DO UPDATE SET
+            asset_name = excluded.asset_name,
+            total_shares = excluded.total_shares,
+            average_cost = excluded.average_cost,
+            total_cost = excluded.total_cost,
+            updated_at = CURRENT_TIMESTAMP
+    ''', (portfolio_id, user_id, asset_type, asset_code, asset_name,
+          total_shares, average_cost, total_cost))
+
+    conn.commit()
+
+    # Get updated position
+    position = c.execute('''
+        SELECT * FROM positions
+        WHERE portfolio_id = ? AND asset_type = ? AND asset_code = ?
+    ''', (portfolio_id, asset_type, asset_code)).fetchone()
+
+    conn.close()
+    return dict(position) if position else None
+
+
+# =============================================================================
+# Portfolio Snapshot Operations (组合快照/历史收益)
+# =============================================================================
+
+def save_portfolio_snapshot(snapshot_data: Dict, portfolio_id: int) -> int:
+    """Save a daily portfolio snapshot."""
+    conn = get_db_connection()
+    c = conn.cursor()
+
+    allocation_json = json.dumps(snapshot_data.get('allocation', {}), ensure_ascii=False)
+
+    c.execute('''
+        INSERT OR REPLACE INTO portfolio_snapshots (
+            portfolio_id, snapshot_date, total_value, total_cost,
+            daily_pnl, daily_pnl_pct, cumulative_pnl, cumulative_pnl_pct,
+            benchmark_value, benchmark_return_pct, allocation_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (
+        portfolio_id,
+        snapshot_data['snapshot_date'],
+        snapshot_data['total_value'],
+        snapshot_data['total_cost'],
+        snapshot_data.get('daily_pnl'),
+        snapshot_data.get('daily_pnl_pct'),
+        snapshot_data.get('cumulative_pnl'),
+        snapshot_data.get('cumulative_pnl_pct'),
+        snapshot_data.get('benchmark_value'),
+        snapshot_data.get('benchmark_return_pct'),
+        allocation_json
+    ))
+
+    snapshot_id = c.lastrowid
+    conn.commit()
+    conn.close()
+    return snapshot_id
+
+
+def get_portfolio_snapshots(portfolio_id: int, start_date: str = None,
+                            end_date: str = None, limit: int = 365) -> List[Dict]:
+    """Get portfolio snapshots for a date range."""
+    conn = get_db_connection()
+
+    sql = 'SELECT * FROM portfolio_snapshots WHERE portfolio_id = ?'
+    params = [portfolio_id]
+
+    if start_date:
+        sql += ' AND snapshot_date >= ?'
+        params.append(start_date)
+
+    if end_date:
+        sql += ' AND snapshot_date <= ?'
+        params.append(end_date)
+
+    sql += ' ORDER BY snapshot_date DESC LIMIT ?'
+    params.append(limit)
+
+    rows = conn.execute(sql, tuple(params)).fetchall()
+    conn.close()
+
+    results = []
+    for row in rows:
+        d = dict(row)
+        if d.get('allocation_json'):
+            try:
+                d['allocation'] = json.loads(d['allocation_json'])
+            except:
+                d['allocation'] = {}
+        results.append(d)
+
+    return results
+
+
+def get_latest_snapshot(portfolio_id: int) -> Optional[Dict]:
+    """Get the most recent snapshot for a portfolio."""
+    snapshots = get_portfolio_snapshots(portfolio_id, limit=1)
+    return snapshots[0] if snapshots else None
+
+
+# =============================================================================
+# Portfolio Alert Operations (风险预警)
+# =============================================================================
+
+def create_alert(alert_data: Dict, portfolio_id: int, user_id: int) -> int:
+    """Create a new portfolio alert."""
+    conn = get_db_connection()
+    c = conn.cursor()
+
+    details_json = json.dumps(alert_data.get('details', {}), ensure_ascii=False) if alert_data.get('details') else None
+
+    c.execute('''
+        INSERT INTO portfolio_alerts (
+            portfolio_id, user_id, alert_type, severity, title, message, details_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    ''', (
+        portfolio_id,
+        user_id,
+        alert_data['alert_type'],
+        alert_data['severity'],
+        alert_data['title'],
+        alert_data['message'],
+        details_json
+    ))
+
+    alert_id = c.lastrowid
+    conn.commit()
+    conn.close()
+    return alert_id
+
+
+def get_portfolio_alerts(portfolio_id: int = None, user_id: int = None,
+                         unread_only: bool = False, limit: int = 50) -> List[Dict]:
+    """Get alerts for a portfolio or user."""
+    conn = get_db_connection()
+
+    sql = 'SELECT * FROM portfolio_alerts WHERE 1=1'
+    params = []
+
+    if portfolio_id:
+        sql += ' AND portfolio_id = ?'
+        params.append(portfolio_id)
+
+    if user_id:
+        sql += ' AND user_id = ?'
+        params.append(user_id)
+
+    if unread_only:
+        sql += ' AND is_read = 0 AND is_dismissed = 0'
+
+    sql += ' ORDER BY triggered_at DESC LIMIT ?'
+    params.append(limit)
+
+    rows = conn.execute(sql, tuple(params)).fetchall()
+    conn.close()
+
+    results = []
+    for row in rows:
+        d = dict(row)
+        if d.get('details_json'):
+            try:
+                d['details'] = json.loads(d['details_json'])
+            except:
+                d['details'] = {}
+        results.append(d)
+
+    return results
+
+
+def mark_alert_read(alert_id: int, user_id: int) -> bool:
+    """Mark an alert as read."""
+    conn = get_db_connection()
+    c = conn.cursor()
+
+    result = c.execute('''
+        UPDATE portfolio_alerts
+        SET is_read = 1, read_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND user_id = ?
+    ''', (alert_id, user_id))
+
+    conn.commit()
+    success = result.rowcount > 0
+    conn.close()
+    return success
+
+
+def dismiss_alert(alert_id: int, user_id: int) -> bool:
+    """Dismiss an alert."""
+    conn = get_db_connection()
+    c = conn.cursor()
+
+    result = c.execute('''
+        UPDATE portfolio_alerts
+        SET is_dismissed = 1, dismissed_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND user_id = ?
+    ''', (alert_id, user_id))
+
+    conn.commit()
+    success = result.rowcount > 0
+    conn.close()
+    return success
+
+
+def get_unread_alert_count(user_id: int) -> int:
+    """Get count of unread alerts for a user."""
+    conn = get_db_connection()
+    count = conn.execute(
+        'SELECT COUNT(*) FROM portfolio_alerts WHERE user_id = ? AND is_read = 0 AND is_dismissed = 0',
+        (user_id,)
+    ).fetchone()[0]
+    conn.close()
+    return count
+
+
+# =============================================================================
+# DIP Plan Operations (定投计划)
+# =============================================================================
+
+def get_portfolio_dip_plans(portfolio_id: int, user_id: int = None, active_only: bool = False) -> List[Dict]:
+    """Get all DIP plans for a portfolio."""
+    conn = get_db_connection()
+
+    sql = 'SELECT * FROM dip_plans WHERE portfolio_id = ?'
+    params = [portfolio_id]
+
+    if user_id:
+        sql += ' AND user_id = ?'
+        params.append(user_id)
+
+    if active_only:
+        sql += ' AND is_active = 1'
+
+    sql += ' ORDER BY created_at DESC'
+
+    rows = conn.execute(sql, tuple(params)).fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+def get_dip_plan_by_id(plan_id: int, user_id: int = None) -> Optional[Dict]:
+    """Get a DIP plan by ID."""
+    conn = get_db_connection()
+
+    sql = 'SELECT * FROM dip_plans WHERE id = ?'
+    params = [plan_id]
+
+    if user_id:
+        sql += ' AND user_id = ?'
+        params.append(user_id)
+
+    row = conn.execute(sql, tuple(params)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def create_dip_plan(plan_data: Dict, portfolio_id: int, user_id: int) -> int:
+    """Create a new DIP plan."""
+    if not user_id or not portfolio_id:
+        raise ValueError("user_id and portfolio_id are required")
+
+    conn = get_db_connection()
+    c = conn.cursor()
+
+    # Calculate next execution date
+    from datetime import datetime, timedelta
+    start_date = datetime.strptime(plan_data['start_date'], '%Y-%m-%d')
+    next_execution = _calculate_next_execution(
+        start_date,
+        plan_data['frequency'],
+        plan_data.get('execution_day')
+    )
+
+    c.execute('''
+        INSERT INTO dip_plans (
+            portfolio_id, user_id, asset_type, asset_code, asset_name,
+            amount_per_period, frequency, execution_day, start_date, end_date,
+            is_active, next_execution_date, notes
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (
+        portfolio_id,
+        user_id,
+        plan_data['asset_type'],
+        plan_data['asset_code'],
+        plan_data.get('asset_name'),
+        plan_data['amount_per_period'],
+        plan_data['frequency'],
+        plan_data.get('execution_day'),
+        plan_data['start_date'],
+        plan_data.get('end_date'),
+        plan_data.get('is_active', 1),
+        next_execution.strftime('%Y-%m-%d') if next_execution else None,
+        plan_data.get('notes')
+    ))
+
+    plan_id = c.lastrowid
+    conn.commit()
+    conn.close()
+    return plan_id
+
+
+def update_dip_plan(plan_id: int, user_id: int, updates: Dict) -> bool:
+    """Update a DIP plan."""
+    conn = get_db_connection()
+    c = conn.cursor()
+
+    # Verify ownership
+    exists = c.execute(
+        'SELECT id FROM dip_plans WHERE id = ? AND user_id = ?',
+        (plan_id, user_id)
+    ).fetchone()
+
+    if not exists:
+        conn.close()
+        return False
+
+    set_clauses = []
+    params = []
+
+    allowed_fields = ['asset_name', 'amount_per_period', 'frequency', 'execution_day',
+                      'end_date', 'is_active', 'notes']
+    for field in allowed_fields:
+        if field in updates:
+            set_clauses.append(f'{field} = ?')
+            params.append(updates[field])
+
+    if set_clauses:
+        set_clauses.append('updated_at = CURRENT_TIMESTAMP')
+        params.extend([plan_id, user_id])
+
+        sql = f"UPDATE dip_plans SET {', '.join(set_clauses)} WHERE id = ? AND user_id = ?"
+        c.execute(sql, tuple(params))
+
+    conn.commit()
+    conn.close()
+    return True
+
+
+def delete_dip_plan(plan_id: int, user_id: int) -> bool:
+    """Delete a DIP plan."""
+    conn = get_db_connection()
+    c = conn.cursor()
+
+    # Verify ownership
+    exists = c.execute(
+        'SELECT id FROM dip_plans WHERE id = ? AND user_id = ?',
+        (plan_id, user_id)
+    ).fetchone()
+
+    if not exists:
+        conn.close()
+        return False
+
+    c.execute('DELETE FROM dip_plans WHERE id = ?', (plan_id,))
+    conn.commit()
+    conn.close()
+    return True
+
+
+def execute_dip_plan(plan_id: int, user_id: int, execution_price: float) -> Optional[int]:
+    """Execute a DIP plan - create a transaction and update plan."""
+    conn = get_db_connection()
+    c = conn.cursor()
+
+    # Get plan
+    plan = c.execute(
+        'SELECT * FROM dip_plans WHERE id = ? AND user_id = ? AND is_active = 1',
+        (plan_id, user_id)
+    ).fetchone()
+
+    if not plan:
+        conn.close()
+        return None
+
+    plan = dict(plan)
+
+    # Calculate shares to buy
+    shares = plan['amount_per_period'] / execution_price
+
+    # Create transaction
+    from datetime import datetime
+    tx_data = {
+        'asset_type': plan['asset_type'],
+        'asset_code': plan['asset_code'],
+        'asset_name': plan['asset_name'],
+        'transaction_type': 'buy',
+        'shares': shares,
+        'price': execution_price,
+        'total_amount': plan['amount_per_period'],
+        'transaction_date': datetime.now().strftime('%Y-%m-%d'),
+        'notes': f'定投计划自动执行 (Plan ID: {plan_id})'
+    }
+
+    # Note: We need to create the transaction outside this function to avoid nested commits
+    # For now, let's update the plan stats
+
+    new_total_invested = plan['total_invested'] + plan['amount_per_period']
+    new_total_shares = plan['total_shares'] + shares
+    new_execution_count = plan['execution_count'] + 1
+
+    # Calculate next execution
+    next_execution = _calculate_next_execution(
+        datetime.now(),
+        plan['frequency'],
+        plan['execution_day']
+    )
+
+    # Check if plan should end
+    is_active = 1
+    if plan['end_date']:
+        end_date = datetime.strptime(plan['end_date'], '%Y-%m-%d')
+        if next_execution and next_execution > end_date:
+            is_active = 0
+            next_execution = None
+
+    c.execute('''
+        UPDATE dip_plans SET
+            total_invested = ?,
+            total_shares = ?,
+            execution_count = ?,
+            last_executed_at = CURRENT_TIMESTAMP,
+            next_execution_date = ?,
+            is_active = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+    ''', (
+        new_total_invested,
+        new_total_shares,
+        new_execution_count,
+        next_execution.strftime('%Y-%m-%d') if next_execution else None,
+        is_active,
+        plan_id
+    ))
+
+    conn.commit()
+    conn.close()
+
+    # Return the transaction data for the caller to create
+    return tx_data
+
+
+def get_pending_dip_plans(date: str = None) -> List[Dict]:
+    """Get all DIP plans that should be executed on a given date."""
+    if not date:
+        from datetime import datetime
+        date = datetime.now().strftime('%Y-%m-%d')
+
+    conn = get_db_connection()
+    rows = conn.execute('''
+        SELECT * FROM dip_plans
+        WHERE is_active = 1 AND next_execution_date <= ?
+    ''', (date,)).fetchall()
+    conn.close()
+
+    return [dict(row) for row in rows]
+
+
+def _calculate_next_execution(current_date, frequency: str, execution_day: int = None):
+    """Calculate the next execution date for a DIP plan."""
+    from datetime import datetime, timedelta
+
+    if isinstance(current_date, str):
+        current_date = datetime.strptime(current_date, '%Y-%m-%d')
+
+    if frequency == 'daily':
+        return current_date + timedelta(days=1)
+
+    elif frequency == 'weekly':
+        # Next week, same day or specified day
+        days_ahead = 7
+        if execution_day is not None:
+            days_ahead = (execution_day - current_date.weekday()) % 7
+            if days_ahead == 0:
+                days_ahead = 7
+        return current_date + timedelta(days=days_ahead)
+
+    elif frequency == 'biweekly':
+        return current_date + timedelta(days=14)
+
+    elif frequency == 'monthly':
+        # Next month, same day or specified day
+        year = current_date.year
+        month = current_date.month + 1
+        if month > 12:
+            month = 1
+            year += 1
+
+        day = execution_day if execution_day else current_date.day
+        # Handle months with fewer days
+        import calendar
+        max_day = calendar.monthrange(year, month)[1]
+        day = min(day, max_day)
+
+        return datetime(year, month, day)
+
+    return None
+
+
+# =============================================================================
+# Data Migration (数据迁移)
+# =============================================================================
+
+def migrate_fund_positions_to_positions(user_id: int, portfolio_id: int) -> int:
+    """Migrate existing fund_positions to the new positions table."""
+    conn = get_db_connection()
+    c = conn.cursor()
+
+    # Get all fund positions for user
+    old_positions = c.execute(
+        'SELECT * FROM fund_positions WHERE user_id = ?',
+        (user_id,)
+    ).fetchall()
+
+    migrated = 0
+    for old_pos in old_positions:
+        old_pos = dict(old_pos)
+
+        # Check if already migrated
+        exists = c.execute('''
+            SELECT id FROM positions
+            WHERE portfolio_id = ? AND asset_type = 'fund' AND asset_code = ?
+        ''', (portfolio_id, old_pos['fund_code'])).fetchone()
+
+        if exists:
+            continue
+
+        # Create position
+        c.execute('''
+            INSERT INTO positions (
+                portfolio_id, user_id, asset_type, asset_code, asset_name,
+                total_shares, average_cost, total_cost, notes
+            ) VALUES (?, ?, 'fund', ?, ?, ?, ?, ?, ?)
+        ''', (
+            portfolio_id,
+            user_id,
+            old_pos['fund_code'],
+            old_pos['fund_name'],
+            old_pos['shares'],
+            old_pos['cost_basis'],
+            old_pos['shares'] * old_pos['cost_basis'],
+            old_pos.get('notes')
+        ))
+        position_id = c.lastrowid
+
+        # Create corresponding transaction
+        c.execute('''
+            INSERT INTO transactions (
+                position_id, portfolio_id, user_id, asset_type, asset_code, asset_name,
+                transaction_type, shares, price, total_amount, transaction_date, notes
+            ) VALUES (?, ?, ?, 'fund', ?, ?, 'buy', ?, ?, ?, ?, ?)
+        ''', (
+            position_id,
+            portfolio_id,
+            user_id,
+            old_pos['fund_code'],
+            old_pos['fund_name'],
+            old_pos['shares'],
+            old_pos['cost_basis'],
+            old_pos['shares'] * old_pos['cost_basis'],
+            old_pos['purchase_date'],
+            f"从旧系统迁移 (原ID: {old_pos['id']})"
+        ))
+
+        migrated += 1
+
+    conn.commit()
+    conn.close()
+    return migrated

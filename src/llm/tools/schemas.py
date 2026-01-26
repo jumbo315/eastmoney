@@ -187,6 +187,53 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
             },
             "required": ["query"]
         }
+    },
+
+    "get_fund_info": {
+        "description": "获取基金详细信息，包括净值、涨跌幅、规模等。当用户询问基金净值、基金表现、ETF信息时使用。",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "fund_code": {
+                    "type": "string",
+                    "description": "基金代码，6位数字，如016708、000001"
+                }
+            },
+            "required": ["fund_code"]
+        }
+    },
+
+    "get_fund_holdings": {
+        "description": "获取基金持仓信息（重仓股）。当用户询问基金持有哪些股票、基金重仓股时使用。",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "fund_code": {
+                    "type": "string",
+                    "description": "基金代码，6位数字"
+                }
+            },
+            "required": ["fund_code"]
+        }
+    },
+
+    "search_funds": {
+        "description": "搜索基金。当用户询问某类基金、查找基金时使用。支持按名称或代码模糊搜索。",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "搜索关键词，如基金名称、代码或类型（如'有色金属'、'医疗'、'沪深300'）"
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "返回数量，默认10个",
+                    "default": 10
+                }
+            },
+            "required": ["query"]
+        }
     }
 }
 

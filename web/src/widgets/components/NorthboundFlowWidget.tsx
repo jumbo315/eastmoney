@@ -35,7 +35,7 @@ export default function NorthboundFlowWidget({ id, config, isEditing }: WidgetPr
             onRefresh={refresh}
             lastUpdated={lastUpdated || undefined}
         >
-            <Box className="h-full flex flex-col gap-4">
+            <Box className="h-full flex flex-col gap-4 overflow-auto">
                 {/* Today's Flow */}
                 {data?.latest && (
                     <Box className="p-4 rounded-lg bg-gradient-to-r from-indigo-50 to-purple-50 border border-indigo-100">

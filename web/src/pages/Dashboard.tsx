@@ -17,30 +17,23 @@ import 'react-resizable/css/styles.css';
 import type { WidgetConfig } from '../widgets/types';
 import { getWidgetComponent } from '../widgets/registry';
 
-// Fixed layout with all 13 widgets
+// Fixed layout with widgets (compact view)
 const DEFAULT_WIDGETS: WidgetConfig[] = [
     // Row 0: Header - Market Overview (compact)
     { id: 'indices', type: 'market_indices', position: { x: 0, y: 0, w: 6, h: 1 } },
     { id: 'sentiment', type: 'market_sentiment', position: { x: 6, y: 0, w: 4, h: 1 } },
     { id: 'stats', type: 'system_stats', position: { x: 10, y: 0, w: 2, h: 1 } },
 
-    // Row 1-5: Main Data - Capital Flow
-    { id: 'mainflow', type: 'main_capital_flow', position: { x: 0, y: 1, w: 4, h: 5 } },
-    { id: 'sectors', type: 'sector_performance', position: { x: 4, y: 1, w: 4, h: 5 } },
-    { id: 'northbound', type: 'northbound_flow', position: { x: 8, y: 1, w: 4, h: 5 } },
+    // Row 1-3: Main Data - Capital Flow (reduced height, scrollable)
+    { id: 'mainflow', type: 'main_capital_flow', position: { x: 0, y: 1, w: 4, h: 3 } },
+    { id: 'sectors', type: 'sector_performance', position: { x: 4, y: 1, w: 4, h: 3 } },
+    { id: 'northbound', type: 'northbound_flow', position: { x: 8, y: 1, w: 4, h: 3 } },
 
-    // Row 6-7: Alert Banner
-    { id: 'abnormal', type: 'abnormal_movements', position: { x: 0, y: 6, w: 12, h: 2 } },
+    // Row 4: Alert Banner (compact)
+    { id: 'abnormal', type: 'abnormal_movements', position: { x: 0, y: 4, w: 12, h: 1 } },
 
-    // Row 8-12: Secondary Data - Industry & Top List
-    { id: 'industry', type: 'industry_flow', position: { x: 0, y: 8, w: 4, h: 5 } },
-    { id: 'toplist', type: 'top_list', position: { x: 4, y: 8, w: 8, h: 5 } },
-
-    // Row 13-18: News, Personal & Macro
-    { id: 'news', type: 'news', position: { x: 0, y: 13, w: 4, h: 6 } },
-    { id: 'watchlist', type: 'watchlist', position: { x: 4, y: 13, w: 4, h: 6 } },
-    { id: 'forex', type: 'forex_rates', position: { x: 8, y: 13, w: 4, h: 4 } },
-    { id: 'gold', type: 'gold_macro', position: { x: 8, y: 17, w: 4, h: 2 } },
+    // Row 5-9: Top List (full width)
+    { id: 'toplist', type: 'top_list', position: { x: 0, y: 5, w: 12, h: 5 } },
 ];
 
 export default function DashboardPage() {
@@ -109,13 +102,13 @@ export default function DashboardPage() {
                     className="layout"
                     layout={layoutItems}
                     cols={12}
-                    rowHeight={80}
+                    rowHeight={70}
                     width={containerWidth}
                     isDraggable={false}
                     isResizable={false}
                     compactType="vertical"
                     preventCollision={false}
-                    margin={[16, 16]}
+                    margin={[12, 12]}
                 >
                     {DEFAULT_WIDGETS.map((widget) => {
                         const WidgetComponent = getWidgetComponent(widget.type);
