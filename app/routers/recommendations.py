@@ -48,7 +48,7 @@ async def generate_recommendations(
         raise HTTPException(status_code=400, detail="Invalid mode. Use 'short', 'long', or 'all'.")
 
     try:
-        from src.analysis.recommendation.engine_v2 import RecommendationEngineV2
+        from src.analysis.recommendation import RecommendationEngine
         from src.storage.db import get_user_preferences
 
         # Load user preferences
@@ -62,7 +62,7 @@ async def generate_recommendations(
 
         # Define synchronous engine work
         def run_engine():
-            engine = RecommendationEngineV2(use_llm_explanations=use_explanations)
+            engine = RecommendationEngine(use_llm_explanations=use_explanations)
             return engine.generate_recommendations(
                 mode=mode,
                 stock_limit=stock_limit,

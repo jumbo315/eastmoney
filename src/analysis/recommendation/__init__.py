@@ -1,5 +1,5 @@
 """
-AI Recommendation System v2 - 智能投资推荐系统
+AI Recommendation System - 智能投资推荐系统
 
 Quantitative factor-based stock and fund recommendation engine.
 Key principles:
@@ -7,7 +7,10 @@ Key principles:
 - Predict breakouts, don't chase rallies
 - Quality and risk-adjusted returns over raw performance
 """
-from .engine import RecommendationEngine
-from .engine_v2 import RecommendationEngineV2, get_v2_recommendations
+from .engine import RecommendationEngine, get_recommendations
 
-__all__ = ['RecommendationEngine', 'RecommendationEngineV2', 'get_v2_recommendations']
+# Backward compatibility aliases
+RecommendationEngineV2 = RecommendationEngine
+get_v2_recommendations = get_recommendations
+
+__all__ = ['RecommendationEngine', 'get_recommendations', 'RecommendationEngineV2', 'get_v2_recommendations']
