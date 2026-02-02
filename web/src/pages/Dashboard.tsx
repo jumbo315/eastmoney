@@ -23,16 +23,16 @@ const DEFAULT_WIDGETS: WidgetConfig[] = [
     { id: 'sentiment', type: 'market_sentiment', position: { x: 6, y: 0, w: 4, h: 1 } },
     { id: 'stats', type: 'system_stats', position: { x: 10, y: 0, w: 2, h: 1 } },
 
-    // Row 1-3: Main Data - Capital Flow (reduced height, scrollable)
-    { id: 'mainflow', type: 'main_capital_flow', position: { x: 0, y: 1, w: 4, h: 3 } },
-    { id: 'sectors', type: 'sector_performance', position: { x: 4, y: 1, w: 4, h: 3 } },
-    { id: 'northbound', type: 'northbound_flow', position: { x: 8, y: 1, w: 4, h: 3 } },
+    // Row 1-6: Main Data - Capital Flow (increased height)
+    { id: 'mainflow', type: 'main_capital_flow', position: { x: 0, y: 1, w: 4, h: 6 } },
+    { id: 'sectors', type: 'sector_performance', position: { x: 4, y: 1, w: 4, h: 6 } },
+    { id: 'northbound', type: 'northbound_flow', position: { x: 8, y: 1, w: 4, h: 6 } },
 
-    // Row 4: Alert Banner (compact)
-    { id: 'abnormal', type: 'abnormal_movements', position: { x: 0, y: 4, w: 12, h: 1 } },
+    // Row 7-9: Alert Banner (stream)
+    { id: 'abnormal', type: 'abnormal_movements', position: { x: 0, y: 7, w: 12, h: 3 } },
 
-    // Row 5-9: Top List (full width)
-    { id: 'toplist', type: 'top_list', position: { x: 0, y: 5, w: 12, h: 5 } },
+    // Row 10-15: Top List (full width)
+    { id: 'toplist', type: 'top_list', position: { x: 0, y: 10, w: 12, h: 6 } },
 ];
 
 export default function DashboardPage() {
