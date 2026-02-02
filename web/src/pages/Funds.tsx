@@ -1,14 +1,14 @@
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { 
-  Typography, 
-  Button, 
-  Grid, 
-  IconButton, 
-  TextField, 
-  Dialog, 
-  DialogTitle, 
-  DialogContent, 
+import {
+  Typography,
+  Button,
+  Grid,
+  IconButton,
+  TextField,
+  Dialog,
+  DialogTitle,
+  DialogContent,
   DialogActions,
   Autocomplete,
   CircularProgress,
@@ -29,37 +29,65 @@ import {
   ListItemIcon,
   ListItemText,
   Snackbar,
-  Alert
+  Alert,
+  Checkbox,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
 import SearchIcon from '@mui/icons-material/Search';
 import AccountBalanceWalletIcon from '@mui/icons-material/AccountBalanceWallet';
-import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import HistoryIcon from '@mui/icons-material/History';
-import PieChartIcon from '@mui/icons-material/PieChart';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
 import AnalyticsIcon from '@mui/icons-material/Analytics';
 import AssessmentIcon from '@mui/icons-material/Assessment';
 import EditIcon from '@mui/icons-material/Edit';
+import CompareArrowsIcon from '@mui/icons-material/CompareArrows';
+import CloseIcon from '@mui/icons-material/Close';
+import DashboardIcon from '@mui/icons-material/Dashboard';
+import EmojiEventsIcon from '@mui/icons-material/EmojiEvents';
+import FolderIcon from '@mui/icons-material/Folder';
+import RefreshIcon from '@mui/icons-material/Refresh';
+import TrendingUpIcon from '@mui/icons-material/TrendingUp';
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip as RechartsTooltip,
+  Legend,
+  ResponsiveContainer,
+} from 'recharts';
 
-import { 
-  fetchFunds, 
-  saveFund, 
-  deleteFund, 
-  searchMarketFunds, 
-  fetchFundMarketDetails, 
-  fetchFundNavHistory,
+import {
+  fetchFunds,
+  saveFund,
+  deleteFund,
+  searchMarketFunds,
   generateReport,
+  compareFundsAdvanced,
+  fetchBatchEstimation,
 } from '../api';
 
-import type{MarketFund,FundItem,NavPoint}  from '../api';
+import type { MarketFund, FundItem, FundComparisonResponse, BatchFundEstimation } from '../api';
+import { useAppContext } from '../contexts/AppContext';
+import { FundMarketOverview, FundRankingTable, FundDetailDialog } from '../components/fund';
+
+const CHART_COLORS = [
+  '#3b82f6', '#22c55e', '#f59e0b', '#ef4444', '#8b5cf6',
+  '#ec4899', '#06b6d4', '#84cc16', '#f97316', '#6366f1',
+];
 
 
 export default function FundsPage() {
   const { t } = useTranslation();
+  const { setCurrentPage, setCurrentFund } = useAppContext();
   const [funds, setFunds] = useState<FundItem[]>([]);
   const [loading, setLoading] = useState(false);
+  
+  // Page Tab State
+  const [pageTab, setPageTab] = useState(0);
+  const [selectedRankingType] = useState('股票型');
   
   // Unified Dialog State (Add/Edit)
   const [openDialog, setOpenDialog] = useState(false);
@@ -79,10 +107,6 @@ export default function FundsPage() {
   // Detail View State
   const [detailOpen, setDetailOpen] = useState(false);
   const [selectedFund, setSelectedFund] = useState<FundItem | null>(null);
-  const [fundDetails, setFundDetails] = useState<any>(null);
-  const [navHistory, setNavHistory] = useState<NavPoint[]>([]);
-  const [loadingDetails, setLoadingDetails] = useState(false);
-  const [detailTab, setDetailTab] = useState(0);
 
   // Action Menu State
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
@@ -95,8 +119,83 @@ export default function FundsPage() {
     severity: 'info'
   });
 
-  const showNotify = (message: string, severity: 'success' | 'info' | 'warning' | 'error' = 'info') => { 
+  const showNotify = (message: string, severity: 'success' | 'info' | 'warning' | 'error' = 'info') => {
     setNotify({ open: true, message, severity });
+  };
+
+  // Comparison Mode State
+  const [compareMode, setCompareMode] = useState(false);
+  const [selectedForCompare, setSelectedForCompare] = useState<Set<string>>(new Set());
+  const [comparisonData, setComparisonData] = useState<FundComparisonResponse | null>(null);
+  const [compareLoading, setCompareLoading] = useState(false);
+  const [compareTab, setCompareTab] = useState(0);
+
+  // Real-time Estimation State
+  const [estimations, setEstimations] = useState<Record<string, BatchFundEstimation>>({});
+  const [estimationLoading, setEstimationLoading] = useState(false);
+  const [isTrading, setIsTrading] = useState(false);
+  const [lastEstimationUpdate, setLastEstimationUpdate] = useState<string | null>(null);
+
+  // Toggle fund selection for comparison
+  const handleToggleCompare = (code: string) => {
+    const newSet = new Set(selectedForCompare);
+    if (newSet.has(code)) {
+      newSet.delete(code);
+    } else if (newSet.size < 10) {
+      newSet.add(code);
+    } else {
+      showNotify(t('funds.compare.max_funds'), 'warning');
+      return;
+    }
+    setSelectedForCompare(newSet);
+  };
+
+  // Run comparison
+  const handleRunComparison = async () => {
+    if (selectedForCompare.size < 2) {
+      showNotify(t('funds.compare.min_funds'), 'warning');
+      return;
+    }
+    setCompareLoading(true);
+    try {
+      const codes = Array.from(selectedForCompare);
+      const result = await compareFundsAdvanced(codes);
+      setComparisonData(result);
+    } catch (err: any) {
+      showNotify(err.message || t('funds.compare.error'), 'error');
+    } finally {
+      setCompareLoading(false);
+    }
+  };
+
+  // Get NAV chart data for comparison
+  const getNavChartData = () => {
+    if (!comparisonData?.nav_comparison?.curves) return [];
+    const curves = comparisonData.nav_comparison.curves;
+    const fundCodes = Object.keys(curves);
+    if (fundCodes.length === 0) return [];
+
+    const dateSet = new Set<string>();
+    fundCodes.forEach((code) => {
+      curves[code].data.forEach((d: any) => dateSet.add(d.date));
+    });
+
+    const sortedDates = Array.from(dateSet).sort();
+    return sortedDates.map((date) => {
+      const point: any = { date };
+      fundCodes.forEach((code) => {
+        const entry = curves[code].data.find((d: any) => d.date === date);
+        point[code] = entry?.value || null;
+      });
+      return point;
+    });
+  };
+
+  // Clear comparison
+  const handleClearComparison = () => {
+    setCompareMode(false);
+    setSelectedForCompare(new Set());
+    setComparisonData(null);
   };
 
   const handleOpenMenu = (event: React.MouseEvent<HTMLElement>, fund: FundItem) => {
@@ -195,7 +294,12 @@ export default function FundsPage() {
   };
 
   useEffect(() => {
+    setCurrentPage('funds');
     loadFunds();
+    return () => {
+      // Clear fund context when leaving page
+      setCurrentFund(null);
+    };
   }, []);
 
   const loadFunds = async () => {
@@ -209,6 +313,50 @@ export default function FundsPage() {
       setLoading(false);
     }
   };
+
+  // Load estimation data
+  const loadEstimations = async () => {
+    if (funds.length === 0) return;
+    
+    setEstimationLoading(true);
+    try {
+      const codes = funds.map(f => f.code);
+      const result = await fetchBatchEstimation(codes);
+      
+      // Build map by code for easy lookup
+      const estimationMap: Record<string, BatchFundEstimation> = {};
+      result.estimations.forEach(est => {
+        estimationMap[est.code] = est;
+      });
+      
+      setEstimations(estimationMap);
+      setIsTrading(result.is_trading);
+      setLastEstimationUpdate(result.timestamp);
+    } catch (error) {
+      console.error('Failed to load estimations:', error);
+    } finally {
+      setEstimationLoading(false);
+    }
+  };
+
+  // Load estimations when funds change or when on "My Holdings" tab
+  useEffect(() => {
+    if (pageTab === 2 && funds.length > 0) {
+      loadEstimations();
+    }
+  }, [funds, pageTab]);
+
+  // Auto-refresh estimations during trading hours (every 60 seconds)
+  useEffect(() => {
+    if (pageTab !== 2 || funds.length === 0) return;
+    
+    // Set up interval for auto-refresh
+    const intervalId = setInterval(() => {
+      loadEstimations();
+    }, 60000); // 60 seconds
+    
+    return () => clearInterval(intervalId);
+  }, [pageTab, funds]);
 
   const handleDelete = async (code: string) => {
     if (window.confirm(t('funds.messages.delete_confirm'))) {
@@ -224,75 +372,13 @@ export default function FundsPage() {
   const handleViewDetails = async (fund: FundItem) => {
     setSelectedFund(fund);
     setDetailOpen(true);
-    setLoadingDetails(true);
-    setFundDetails(null);
-    setNavHistory([]);
-    
-    try {
-      const [details, nav] = await Promise.all([
-        fetchFundMarketDetails(fund.code),
-        fetchFundNavHistory(fund.code)
-      ]);
-      setFundDetails(details);
-      setNavHistory(nav);
-    } catch (error) {
-      console.error("Failed to load fund details", error);
-    } finally {
-      setLoadingDetails(false);
-    }
-  };
 
-  // Improved SVG Line Chart Renderer
-  const renderMiniChart = (data: NavPoint[]) => {
-    if (!data || data.length < 2) return null;
-    const values = data.map(d => d.value);
-    const min = Math.min(...values);
-    const max = Math.max(...values);
-    const range = max - min;
-    const padding = 20;
-    const width = 800;
-    const height = 240;
-    
-    const points = data.map((d, i) => {
-      const x = (i / (data.length - 1)) * (width - 2 * padding) + padding;
-      const y = (height - padding) - ((d.value - min) / range) * (height - 2 * padding);
-      return `${x},${y}`;
-    }).join(' ');
-
-    return (
-      <Box sx={{ bgcolor: '#fcfcfc', p: 2, borderRadius: '12px', border: '1px solid #f1f5f9' }}>
-        <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-48 overflow-visible">
-          {/* Horizontal Grid Lines */}
-          {[0, 0.25, 0.5, 0.75, 1].map((v) => {
-              const y = (height - padding) - v * (height - 2 * padding);
-              const val = (min + v * range).toFixed(4);
-              return (
-                  <g key={v}>
-                      <line x1={padding} y1={y} x2={width-padding} y2={y} stroke="#e2e8f0" strokeDasharray="4 4" />
-                      <text x={0} y={y + 4} fontSize="10" fill="#94a3b8" fontFamily="JetBrains Mono">{val}</text>
-                  </g>
-              )
-          })}
-          <polyline
-            fill="none"
-            stroke="#6366f1"
-            strokeWidth="2.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            points={points}
-          />
-          {/* Shadow area */}
-          <path
-            d={`M${padding},${height-padding} L${points} L${width-padding},${height-padding} Z`}
-            fill="rgba(99, 102, 241, 0.08)"
-          />
-        </svg>
-      </Box>
-    );
+    // Update context for AI assistant
+    setCurrentFund({ code: fund.code, name: fund.name });
   };
 
   return (
-    <Box sx={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 4 }}>
+    <Box sx={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 3 }}>
       {/* Header */}
       <div className="flex justify-between items-center">
         <div>
@@ -303,47 +389,269 @@ export default function FundsPage() {
             {t('funds.subtitle')}
           </Typography>
         </div>
-        <Button
-          variant="contained"
-          startIcon={<AddIcon />}
-          onClick={() => handleOpenDialog()}
-          sx={{
-            backgroundColor: '#6366f1',
-            borderRadius: '10px',
-            px: 3,
-            textTransform: 'none',
-            fontWeight: 600,
-            '&:hover': { backgroundColor: '#4f46e5' }
-          }}
-        >
-          {t('funds.add_target')}
-        </Button>
+        <Box sx={{ display: 'flex', gap: 1.5 }}>
+          {pageTab === 2 && compareMode ? (
+            <>
+              <Button
+                variant="outlined"
+                onClick={handleClearComparison}
+                startIcon={<CloseIcon />}
+                sx={{
+                  borderRadius: '10px',
+                  textTransform: 'none',
+                  fontWeight: 600,
+                  borderColor: '#e2e8f0',
+                  color: '#64748b',
+                }}
+              >
+                {t('funds.compare.cancel')}
+              </Button>
+              <Button
+                variant="contained"
+                onClick={handleRunComparison}
+                disabled={selectedForCompare.size < 2 || compareLoading}
+                startIcon={compareLoading ? <CircularProgress size={16} color="inherit" /> : <CompareArrowsIcon />}
+                sx={{
+                  backgroundColor: '#22c55e',
+                  borderRadius: '10px',
+                  px: 3,
+                  textTransform: 'none',
+                  fontWeight: 600,
+                  '&:hover': { backgroundColor: '#16a34a' },
+                  '&:disabled': { backgroundColor: '#94a3b8' },
+                }}
+              >
+                {t('funds.compare.compare_btn')} ({selectedForCompare.size}/10)
+              </Button>
+            </>
+          ) : pageTab === 2 && (
+            <>
+              <Button
+                variant="outlined"
+                startIcon={<CompareArrowsIcon />}
+                onClick={() => setCompareMode(true)}
+                sx={{
+                  borderRadius: '10px',
+                  textTransform: 'none',
+                  fontWeight: 600,
+                  borderColor: '#e2e8f0',
+                  color: '#64748b',
+                  '&:hover': { borderColor: '#6366f1', color: '#6366f1', bgcolor: 'rgba(99, 102, 241, 0.05)' },
+                }}
+              >
+                {t('funds.compare.title')}
+              </Button>
+              <Button
+                variant="contained"
+                startIcon={<AddIcon />}
+                onClick={() => handleOpenDialog()}
+                sx={{
+                  backgroundColor: '#6366f1',
+                  borderRadius: '10px',
+                  px: 3,
+                  textTransform: 'none',
+                  fontWeight: 600,
+                  '&:hover': { backgroundColor: '#4f46e5' }
+                }}
+              >
+                {t('funds.add_target')}
+              </Button>
+            </>
+          )}
+        </Box>
       </div>
 
-      {loading ? (
-        <div className="flex justify-center py-20">
-          <CircularProgress size={32} sx={{ color: '#6366f1' }} />
-        </div>
-      ) : (
+      {/* Page Tabs */}
+      <Paper 
+        elevation={0} 
+        sx={{ 
+          borderRadius: '12px', 
+          border: '1px solid #f1f5f9',
+          bgcolor: '#fafafa',
+        }}
+      >
+        <Tabs
+          value={pageTab}
+          onChange={(_, v) => setPageTab(v)}
+          variant="scrollable"
+          scrollButtons="auto"
+          sx={{
+            '& .MuiTab-root': {
+              textTransform: 'none',
+              fontWeight: 600,
+              fontSize: '0.9rem',
+              minHeight: 56,
+              color: '#64748b',
+              '&.Mui-selected': {
+                color: '#6366f1',
+              },
+            },
+            '& .MuiTabs-indicator': {
+              backgroundColor: '#6366f1',
+              height: 3,
+              borderRadius: '3px 3px 0 0',
+            },
+          }}
+        >
+          <Tab 
+            icon={<DashboardIcon sx={{ fontSize: 20 }} />} 
+            iconPosition="start" 
+            label="市场概览" 
+          />
+          <Tab 
+            icon={<EmojiEventsIcon sx={{ fontSize: 20 }} />} 
+            iconPosition="start" 
+            label="基金排行" 
+          />
+          <Tab 
+            icon={<FolderIcon sx={{ fontSize: 20 }} />} 
+            iconPosition="start" 
+            label="我的持仓" 
+          />
+        </Tabs>
+      </Paper>
+
+      {/* Tab Content */}
+      {pageTab === 0 && (
+        <FundMarketOverview />
+      )}
+
+      {pageTab === 1 && (
+        <FundRankingTable 
+          initialFundType={selectedRankingType}
+          onFundClick={(code, name) => {
+            // Open fund details dialog
+            const fundItem: FundItem = { code, name, is_active: true };
+            handleViewDetails(fundItem);
+          }}
+        />
+      )}
+
+      {pageTab === 2 && (
+        <>
+          {loading ? (
+            <div className="flex justify-center py-20">
+              <CircularProgress size={32} sx={{ color: '#6366f1' }} />
+            </div>
+          ) : (
+        <>
+          {/* Estimation Status Bar */}
+          <Box sx={{ 
+            display: 'flex', 
+            justifyContent: 'space-between', 
+            alignItems: 'center',
+            px: 2,
+            py: 1.5,
+            bgcolor: isTrading ? 'rgba(34, 197, 94, 0.05)' : '#f8fafc',
+            border: '1px solid',
+            borderColor: isTrading ? 'rgba(34, 197, 94, 0.2)' : '#e2e8f0',
+            borderRadius: '12px',
+            mb: 2,
+          }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+              <TrendingUpIcon sx={{ color: isTrading ? '#22c55e' : '#94a3b8', fontSize: 20 }} />
+              <Typography sx={{ fontSize: '0.85rem', fontWeight: 700, color: isTrading ? '#16a34a' : '#64748b' }}>
+                {isTrading ? '盘中估值 · 实时更新' : '收盘估值 · 15:00数据'}
+              </Typography>
+              {isTrading && (
+                <Chip 
+                  label="LIVE" 
+                  size="small" 
+                  sx={{ 
+                    bgcolor: '#22c55e', 
+                    color: '#fff', 
+                    fontSize: '0.6rem', 
+                    fontWeight: 900,
+                    height: '18px',
+                    animation: 'pulse 2s infinite',
+                    '@keyframes pulse': {
+                      '0%, 100%': { opacity: 1 },
+                      '50%': { opacity: 0.7 },
+                    },
+                  }} 
+                />
+              )}
+            </Box>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              {lastEstimationUpdate && (
+                <Typography sx={{ fontSize: '0.75rem', color: '#94a3b8', fontFamily: 'JetBrains Mono' }}>
+                  更新于 {new Date(lastEstimationUpdate).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
+                </Typography>
+              )}
+              <IconButton 
+                size="small" 
+                onClick={loadEstimations}
+                disabled={estimationLoading}
+                sx={{ 
+                  color: '#64748b',
+                  '&:hover': { color: '#6366f1', bgcolor: 'rgba(99, 102, 241, 0.05)' },
+                }}
+              >
+                <RefreshIcon 
+                  fontSize="small" 
+                  sx={{ 
+                    animation: estimationLoading ? 'spin 1s linear infinite' : 'none',
+                    '@keyframes spin': { from: { transform: 'rotate(0deg)' }, to: { transform: 'rotate(360deg)' } },
+                  }} 
+                />
+              </IconButton>
+            </Box>
+          </Box>
+
         <TableContainer component={Paper} elevation={0} sx={{ borderRadius: '16px', border: '1px solid #f1f5f9', overflow: 'hidden' }}>
           <Table sx={{ minWidth: 650 }}>
             <TableHead sx={{ bgcolor: '#f8fafc' }}>
               <TableRow>
+                {compareMode && (
+                  <TableCell padding="checkbox" sx={{ py: 2 }}>
+                    <Checkbox
+                      indeterminate={selectedForCompare.size > 0 && selectedForCompare.size < funds.length}
+                      checked={funds.length > 0 && selectedForCompare.size === funds.length}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          const allCodes = new Set(funds.slice(0, 10).map(f => f.code));
+                          setSelectedForCompare(allCodes);
+                        } else {
+                          setSelectedForCompare(new Set());
+                        }
+                      }}
+                      sx={{ color: '#94a3b8' }}
+                    />
+                  </TableCell>
+                )}
                 <TableCell sx={{ color: '#64748b', fontWeight: 800, fontSize: '0.75rem', py: 2 }}>{t('funds.table.fund_entity')}</TableCell>
+                <TableCell align="right" sx={{ color: '#64748b', fontWeight: 800, fontSize: '0.75rem', py: 2 }}>估算净值</TableCell>
+                <TableCell align="right" sx={{ color: '#64748b', fontWeight: 800, fontSize: '0.75rem', py: 2 }}>估算涨幅</TableCell>
                 <TableCell sx={{ color: '#64748b', fontWeight: 800, fontSize: '0.75rem', py: 2 }}>{t('funds.table.strategy')}</TableCell>
-                <TableCell sx={{ color: '#64748b', fontWeight: 800, fontSize: '0.75rem', py: 2 }}>{t('funds.table.sectors')}</TableCell>
                 <TableCell sx={{ color: '#64748b', fontWeight: 800, fontSize: '0.75rem', py: 2 }}>{t('funds.table.auto_schedule')}</TableCell>
                 <TableCell align="right" sx={{ color: '#64748b', fontWeight: 800, fontSize: '0.75rem', py: 2 }}>{t('funds.table.actions')}</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
-              {funds.map((fund) => (
-                <TableRow 
-                  key={fund.code} 
-                  hover 
-                  onClick={() => handleViewDetails(fund)}
-                  sx={{ cursor: 'pointer', '&:last-child td, &:last-child th': { border: 0 } }}
+              {funds.map((fund, idx) => (
+                <TableRow
+                  key={fund.code}
+                  hover
+                  onClick={() => compareMode ? handleToggleCompare(fund.code) : handleViewDetails(fund)}
+                  sx={{
+                    cursor: 'pointer',
+                    '&:last-child td, &:last-child th': { border: 0 },
+                    bgcolor: selectedForCompare.has(fund.code) ? 'rgba(99, 102, 241, 0.05)' : 'inherit',
+                  }}
                 >
+                  {compareMode && (
+                    <TableCell padding="checkbox">
+                      <Checkbox
+                        checked={selectedForCompare.has(fund.code)}
+                        onChange={() => handleToggleCompare(fund.code)}
+                        onClick={(e) => e.stopPropagation()}
+                        sx={{
+                          color: '#94a3b8',
+                          '&.Mui-checked': { color: CHART_COLORS[idx % CHART_COLORS.length] },
+                        }}
+                      />
+                    </TableCell>
+                  )}
                   <TableCell sx={{ py: 2.5 }}>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
                       <Box sx={{ p: 1, bgcolor: '#f1f5f9', borderRadius: '10px', color: '#6366f1' }}>    
@@ -354,6 +662,56 @@ export default function FundsPage() {
                         <Typography sx={{ color: '#94a3b8', fontFamily: 'JetBrains Mono', fontSize: '0.75rem' }}>{fund.code}</Typography>
                       </Box>
                     </Box>
+                  </TableCell>
+                  {/* Estimated NAV */}
+                  <TableCell align="right">
+                    {estimations[fund.code]?.not_available ? (
+                      <Typography sx={{ color: '#94a3b8', fontSize: '0.75rem' }}>--</Typography>
+                    ) : estimations[fund.code]?.estimated_nav ? (
+                      <Box>
+                        <Typography sx={{ 
+                          fontFamily: 'JetBrains Mono', 
+                          fontWeight: 800, 
+                          fontSize: '0.95rem',
+                          color: '#1e293b',
+                        }}>
+                          {estimations[fund.code].estimated_nav?.toFixed(4)}
+                        </Typography>
+                        <Typography sx={{ 
+                          fontSize: '0.65rem', 
+                          color: '#94a3b8',
+                          fontFamily: 'JetBrains Mono',
+                        }}>
+                          前值 {estimations[fund.code].prev_nav?.toFixed(4)}
+                        </Typography>
+                      </Box>
+                    ) : (
+                      <Typography sx={{ color: '#cbd5e1', fontSize: '0.75rem' }}>加载中...</Typography>
+                    )}
+                  </TableCell>
+                  {/* Estimated Change % */}
+                  <TableCell align="right">
+                    {estimations[fund.code]?.not_available ? (
+                      <Typography sx={{ color: '#94a3b8', fontSize: '0.75rem' }}>--</Typography>
+                    ) : estimations[fund.code]?.estimated_change_pct !== null && estimations[fund.code]?.estimated_change_pct !== undefined ? (
+                      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 0.5 }}>
+                        <Typography sx={{ 
+                          fontFamily: 'JetBrains Mono', 
+                          fontWeight: 900, 
+                          fontSize: '1rem',
+                          color: (estimations[fund.code].estimated_change_pct ?? 0) > 0 
+                            ? '#ef4444' 
+                            : (estimations[fund.code].estimated_change_pct ?? 0) < 0 
+                              ? '#22c55e' 
+                              : '#64748b',
+                        }}>
+                          {(estimations[fund.code].estimated_change_pct ?? 0) > 0 ? '+' : ''}
+                          {estimations[fund.code].estimated_change_pct?.toFixed(2)}%
+                        </Typography>
+                      </Box>
+                    ) : (
+                      <Typography sx={{ color: '#cbd5e1', fontSize: '0.75rem' }}>--</Typography>
+                    )}
                   </TableCell>
                   <TableCell>
                     <Chip 
@@ -369,13 +727,6 @@ export default function FundsPage() {
                         borderRadius: '6px'
                       }} 
                     />
-                  </TableCell>
-                  <TableCell>
-                    <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
-                        {fund.focus?.map((tag, i) => (
-                            <Chip key={i} label={tag} size="small" sx={{ fontSize: '0.6rem', height: '18px', bgcolor: '#f1f5f9', color: '#64748b' }} />
-                        ))}
-                    </Box>
                   </TableCell>
                   <TableCell>
                     {(!fund.pre_market_time && !fund.post_market_time) ? (
@@ -401,7 +752,268 @@ export default function FundsPage() {
             </TableBody>
           </Table>
         </TableContainer>
+        </>
+          )}
+        </>
       )}
+
+      {/* Comparison Results Dialog */}
+      <Dialog
+        open={comparisonData !== null}
+        onClose={() => setComparisonData(null)}
+        maxWidth="lg"
+        fullWidth
+        scroll="paper"
+        PaperProps={{
+          sx: {
+            borderRadius: '20px',
+            bgcolor: '#ffffff',
+            boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
+            maxHeight: '90vh',
+          }
+        }}
+      >
+        {comparisonData && (
+          <>
+            <DialogTitle sx={{ p: 0 }}>
+              <Box sx={{ p: 2.5, bgcolor: '#f8fafc', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <Typography variant="h6" sx={{ fontWeight: 700, display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <CompareArrowsIcon sx={{ color: '#6366f1' }} />
+                  {t('funds.compare.results_title')} ({Object.keys(comparisonData.nav_comparison?.curves || {}).length} {t('funds.compare.funds')})
+                </Typography>
+                <IconButton size="small" onClick={() => setComparisonData(null)} sx={{ color: '#94a3b8' }}>
+                  <CloseIcon />
+                </IconButton>
+              </Box>
+            </DialogTitle>
+
+            <DialogContent sx={{ p: 0 }}>
+              <Tabs
+                value={compareTab}
+                onChange={(_, v) => setCompareTab(v)}
+                sx={{
+                  borderBottom: '1px solid #f1f5f9',
+                  px: 2,
+                  '& .MuiTab-root': { textTransform: 'none', fontWeight: 700 },
+                  '& .Mui-selected': { color: '#6366f1 !important' },
+                  '& .MuiTabs-indicator': { bgcolor: '#6366f1' },
+                }}
+              >
+                <Tab label={t('funds.compare.nav_chart')} />
+                <Tab label={t('funds.compare.return_compare')} />
+                <Tab label={t('funds.compare.risk_compare')} />
+                <Tab label={t('funds.compare.holdings_overlap')} />
+              </Tabs>
+
+              <Box sx={{ p: 3 }}>
+                {/* NAV Chart */}
+                {compareTab === 0 && (
+                  <Box sx={{ height: 400 }}>
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={getNavChartData()}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                        <XAxis dataKey="date" tick={{ fontSize: 11 }} tickFormatter={(v) => v.slice(5)} />
+                        <YAxis tick={{ fontSize: 11 }} domain={['auto', 'auto']} />
+                        <RechartsTooltip formatter={(value: any) => [value?.toFixed(4), '']} />
+                        <Legend />
+                        {Object.keys(comparisonData.nav_comparison?.curves || {}).map((code, idx) => (
+                          <Line
+                            key={code}
+                            type="monotone"
+                            dataKey={code}
+                            name={comparisonData.nav_comparison.curves[code].name}
+                            stroke={CHART_COLORS[idx % CHART_COLORS.length]}
+                            dot={false}
+                            strokeWidth={2}
+                          />
+                        ))}
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </Box>
+                )}
+
+                {/* Return Comparison */}
+                {compareTab === 1 && comparisonData.return_comparison && (
+                  <TableContainer>
+                    <Table>
+                      <TableHead sx={{ bgcolor: '#f8fafc' }}>
+                        <TableRow>
+                          <TableCell sx={{ fontWeight: 800 }}>{t('funds.compare.fund_name')}</TableCell>
+                          <TableCell align="right" sx={{ fontWeight: 800 }}>1M</TableCell>
+                          <TableCell align="right" sx={{ fontWeight: 800 }}>3M</TableCell>
+                          <TableCell align="right" sx={{ fontWeight: 800 }}>6M</TableCell>
+                          <TableCell align="right" sx={{ fontWeight: 800 }}>1Y</TableCell>
+                          <TableCell align="right" sx={{ fontWeight: 800 }}>3Y</TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {Object.values(comparisonData.return_comparison.returns).map((fund: any, idx) => (
+                          <TableRow key={fund.code} hover>
+                            <TableCell>
+                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                <Box sx={{ width: 12, height: 12, borderRadius: '50%', bgcolor: CHART_COLORS[idx % CHART_COLORS.length] }} />
+                                <Typography sx={{ fontWeight: 600 }}>{fund.name}</Typography>
+                              </Box>
+                            </TableCell>
+                            {['1m', '3m', '6m', '1y', '3y'].map((period) => (
+                              <TableCell
+                                key={period}
+                                align="right"
+                                sx={{
+                                  fontFamily: 'JetBrains Mono',
+                                  fontWeight: 700,
+                                  color: fund[period] > 0 ? 'success.main' : fund[period] < 0 ? 'error.main' : 'text.primary',
+                                }}
+                              >
+                                {fund[period] !== null ? `${fund[period] > 0 ? '+' : ''}${fund[period]}%` : '-'}
+                              </TableCell>
+                            ))}
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+                )}
+
+                {/* Risk Comparison */}
+                {compareTab === 2 && comparisonData.risk_comparison && (
+                  <TableContainer>
+                    <Table>
+                      <TableHead sx={{ bgcolor: '#f8fafc' }}>
+                        <TableRow>
+                          <TableCell sx={{ fontWeight: 800 }}>{t('funds.compare.fund_name')}</TableCell>
+                          <TableCell align="right" sx={{ fontWeight: 800 }}>{t('funds.risk.sharpe_ratio')}</TableCell>
+                          <TableCell align="right" sx={{ fontWeight: 800 }}>{t('funds.risk.max_drawdown')}</TableCell>
+                          <TableCell align="right" sx={{ fontWeight: 800 }}>{t('funds.risk.volatility')}</TableCell>
+                          <TableCell align="right" sx={{ fontWeight: 800 }}>{t('funds.risk.calmar_ratio')}</TableCell>
+                          <TableCell align="right" sx={{ fontWeight: 800 }}>{t('funds.risk.annual_return')}</TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {Object.values(comparisonData.risk_comparison.metrics).map((fund: any, idx) => (
+                          <TableRow key={fund.code} hover>
+                            <TableCell>
+                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                <Box sx={{ width: 12, height: 12, borderRadius: '50%', bgcolor: CHART_COLORS[idx % CHART_COLORS.length] }} />
+                                <Typography sx={{ fontWeight: 600 }}>{fund.name}</Typography>
+                              </Box>
+                            </TableCell>
+                            <TableCell align="right" sx={{ fontFamily: 'JetBrains Mono', fontWeight: 700 }}>{fund.sharpe_ratio}</TableCell>
+                            <TableCell align="right" sx={{ fontFamily: 'JetBrains Mono', fontWeight: 700, color: 'error.main' }}>-{fund.max_drawdown}%</TableCell>
+                            <TableCell align="right" sx={{ fontFamily: 'JetBrains Mono', fontWeight: 700 }}>{fund.annual_volatility}%</TableCell>
+                            <TableCell align="right" sx={{ fontFamily: 'JetBrains Mono', fontWeight: 700 }}>{fund.calmar_ratio}</TableCell>
+                            <TableCell
+                              align="right"
+                              sx={{
+                                fontFamily: 'JetBrains Mono',
+                                fontWeight: 700,
+                                color: fund.annual_return > 0 ? 'success.main' : 'error.main',
+                              }}
+                            >
+                              {fund.annual_return > 0 ? '+' : ''}{fund.annual_return}%
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+                )}
+
+                {/* Holdings Overlap */}
+                {compareTab === 3 && comparisonData.holdings_overlap && (
+                  <Box>
+                    {comparisonData.holdings_overlap.common_stocks?.length > 0 ? (
+                      <>
+                        <Typography variant="subtitle2" sx={{ mb: 2, fontWeight: 700 }}>
+                          {t('funds.compare.common_holdings')} ({comparisonData.holdings_overlap.common_stocks.length})
+                        </Typography>
+                        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                          {comparisonData.holdings_overlap.common_stocks.map((stock: any) => (
+                            <Chip
+                              key={stock.code}
+                              label={`${stock.name} (${stock.count} ${t('funds.compare.funds')})`}
+                              variant="outlined"
+                              size="small"
+                              sx={{ borderRadius: '8px' }}
+                            />
+                          ))}
+                        </Box>
+                      </>
+                    ) : (
+                      <Typography color="text.secondary" sx={{ textAlign: 'center', py: 4 }}>
+                        {comparisonData.holdings_overlap.message || t('funds.compare.no_common_holdings')}
+                      </Typography>
+                    )}
+                  </Box>
+                )}
+              </Box>
+
+              {/* Ranking Section */}
+              {comparisonData.ranking && (
+                <Box sx={{ p: 3, borderTop: '1px solid #f1f5f9', bgcolor: '#fcfcfc' }}>
+                  <Typography variant="h6" sx={{ mb: 2, fontWeight: 700 }}>
+                    {t('funds.compare.ranking')}
+                  </Typography>
+                  <Grid container spacing={2}>
+                    {comparisonData.ranking.ranking.map((fund: any) => (
+                      <Grid size={{ xs: 12, sm: 6, md: 4 }} key={fund.code}>
+                        <Paper
+                          variant="outlined"
+                          sx={{
+                            p: 2,
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 2,
+                            borderRadius: '12px',
+                            borderLeft: fund.rank === 1 ? 4 : 0,
+                            borderColor: fund.rank === 1 ? 'warning.main' : '#e2e8f0',
+                            bgcolor: fund.rank === 1 ? 'rgba(245, 158, 11, 0.05)' : '#fff',
+                          }}
+                        >
+                          <Typography
+                            variant="h4"
+                            sx={{
+                              fontWeight: 900,
+                              fontFamily: 'JetBrains Mono',
+                              color: fund.rank === 1 ? 'warning.main' : fund.rank === 2 ? '#94a3b8' : fund.rank === 3 ? '#cd7f32' : 'text.secondary',
+                            }}
+                          >
+                            #{fund.rank}
+                          </Typography>
+                          <Box>
+                            <Typography variant="body1" sx={{ fontWeight: 700 }}>{fund.name}</Typography>
+                            <Typography variant="body2" color="text.secondary" sx={{ fontFamily: 'JetBrains Mono' }}>
+                              {t('funds.compare.score')}: {fund.score}
+                            </Typography>
+                          </Box>
+                        </Paper>
+                      </Grid>
+                    ))}
+                  </Grid>
+                </Box>
+              )}
+            </DialogContent>
+
+            <DialogActions sx={{ p: 2, borderTop: '1px solid #f1f5f9', bgcolor: '#fcfcfc' }}>
+              <Button
+                onClick={() => setComparisonData(null)}
+                variant="contained"
+                sx={{
+                  bgcolor: '#0f172a',
+                  color: '#ffffff',
+                  px: 4,
+                  borderRadius: '10px',
+                  textTransform: 'none',
+                  fontWeight: 700,
+                  '&:hover': { bgcolor: '#1e293b' }
+                }}
+              >
+                {t('funds.details.close')}
+              </Button>
+            </DialogActions>
+          </>
+        )}
+      </Dialog>
 
       {/* Notifications */}
       <Snackbar 
@@ -615,243 +1227,13 @@ export default function FundsPage() {
         </DialogActions>
       </Dialog>
 
-      {/* Fund Details Dialog - Professional Financial Factsheet */}
-
-      {/* Fund Details Dialog - Professional Financial Factsheet */}
-      <Dialog 
-        open={detailOpen} 
-        onClose={() => setDetailOpen(false)} 
-        maxWidth="sm" 
-        fullWidth
-        scroll="paper"
-        PaperProps={{ 
-          sx: { 
-            borderRadius: '20px', 
-            bgcolor: '#ffffff', 
-            boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
-            height: '90vh',
-          } 
-        }}
-      >
-        {/* Header Section - Modern Ticker Style */}
-        <DialogTitle sx={{ p: 0 }}>
-          <Box sx={{ 
-            bgcolor: '#fcfcfc', 
-            p: 3.5, 
-            borderBottom: '1px solid #f1f5f9',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 2
-          }}>
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-              <Box sx={{ flex: 1 }}>
-                <Typography variant="h5" sx={{ fontWeight: 900, color: '#0f172a', letterSpacing: '-0.02em', mb: 1, lineHeight: 1.2 }}>
-                    {selectedFund?.name}
-                </Typography>
-                <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center' }}>
-                    <Box sx={{ px: 1, py: 0.25, bgcolor: '#6366f1', borderRadius: '4px' }}>
-                        <Typography sx={{ color: '#fff', fontWeight: 800, fontFamily: 'JetBrains Mono', fontSize: '0.75rem' }}>
-                            {selectedFund?.code}
-                        </Typography>
-                    </Box>
-                    <Typography variant="caption" sx={{ color: '#64748b', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                        {typeof fundDetails?.info?.type === 'string' ? fundDetails.info.type : 'Sector Strategy'}
-                    </Typography>
-                </Box>
-              </Box>
-              <Box sx={{ textAlign: 'right', minWidth: '120px' }}>
-                <Typography sx={{ color: '#6366f1', fontSize: '0.7rem', fontWeight: 900, mb: 0.5, letterSpacing: '0.1em' }}>{t('funds.details.latest_nav')}</Typography>
-                <Typography variant="h4" sx={{ color: '#0f172a', fontWeight: 900, fontFamily: 'JetBrains Mono', lineHeight: 1 }}>
-                    {fundDetails?.info?.nav && typeof fundDetails.info.nav !== 'object' && fundDetails.info.nav !== "---" 
-                      ? fundDetails.info.nav 
-                      : (navHistory.length > 0 ? navHistory[navHistory.length - 1].value.toFixed(4) : '---')}
-                </Typography>
-              </Box>
-            </Box>
-            
-            {/* Quick Metadata Grid */}
-            <Grid container spacing={2} sx={{ mt: 1 }}>
-                 {[
-                   { label: t('funds.details.manager'), value: fundDetails?.info?.manager },
-                   { label: t('funds.details.fund_size'), value: fundDetails?.info?.size },
-                   { label: t('funds.details.morningstar'), value: fundDetails?.info?.rating },
-                 ].map((item, i) => (
-                   <Grid size={4} key={i}>
-                      <Typography sx={{ color: '#94a3b8', fontSize: '0.65rem', fontWeight: 800, mb: 0.5 }}>{item.label}</Typography>
-                      <Typography sx={{ color: '#334155', fontSize: '0.75rem', fontWeight: 700 }}>
-                        {item.value && typeof item.value !== 'object' ? item.value : '---'}
-                      </Typography>
-                   </Grid>
-                 ))}
-            </Grid>
-          </Box>
-        </DialogTitle>
-
-        <DialogContent sx={{ p: 0, bgcolor: '#ffffff' }}>
-          {loadingDetails ? (
-            <Box sx={{ py: 12, textAlign: 'center' }}>
-              <CircularProgress size={32} thickness={5} sx={{ color: '#6366f1', mb: 2 }} />
-              <Typography variant="body2" sx={{ color: '#64748b', fontWeight: 600 }}>Fetching Market Intelligence...</Typography>
-            </Box>
-          ) : fundDetails ? (
-            <Box sx={{ p: 3.5, display: 'flex', flexDirection: 'column', gap: 5 }}>
-              
-              {/* 1. Core Chart Section */}
-              <Box>
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                    <Typography variant="overline" sx={{ color: '#0f172a', fontWeight: 900, fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: 1 }}>
-                        <TrendingUpIcon sx={{ fontSize: 18, color: '#6366f1' }} /> {t('funds.details.performance_analytics')}
-                    </Typography>
-                    <Typography variant="caption" sx={{ color: '#94a3b8', fontWeight: 700 }}>{t('funds.details.last_100_days')}</Typography>
-                </Box>
-                <Box sx={{ p: 2.5, borderRadius: '16px', border: '1px solid #f1f5f9', bgcolor: '#fcfcfc', boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.02)' }}>
-                    {renderMiniChart(navHistory)}
-                </Box>
-              </Box>
-
-              {/* 2. Statistical Data Tabs */}
-              <Box>
-                <Typography variant="overline" sx={{ color: '#0f172a', fontWeight: 900, fontSize: '0.75rem', mb: 2, display: 'block' }}>
-                    {t('funds.details.historical_reference')}
-                </Typography>
-                <Tabs 
-                    value={detailTab} 
-                    onChange={(_, v) => setDetailTab(v)}
-                    sx={{
-                        minHeight: '40px',
-                        mb: 2.5,
-                        borderBottom: '1px solid #f1f5f9',
-                        '& .MuiTab-root': { py: 1, minHeight: '40px', textTransform: 'none', fontWeight: 800, fontSize: '0.85rem', color: '#94a3b8' },
-                        '& .Mui-selected': { color: '#6366f1 !important' },
-                        '& .MuiTabs-indicator': { bgcolor: '#6366f1', height: 3, borderRadius: '3px 3px 0 0' }
-                    }}
-                >
-                    <Tab label={t('funds.details.stats_tab')} />
-                    <Tab label={t('funds.details.nav_tab')} />
-                </Tabs>
-
-                {detailTab === 0 ? (
-                    <TableContainer sx={{ borderRadius: '12px', border: '1px solid #f1f5f9' }}>
-                        <Table size="small">
-                            <TableHead sx={{ bgcolor: '#f8fafc' }}>
-                                <TableRow>
-                                    <TableCell sx={{ color: '#64748b', fontWeight: 800, fontSize: '0.7rem' }}>{t('funds.details.timeframe')}</TableCell>
-                                    <TableCell align="right" sx={{ color: '#64748b', fontWeight: 800, fontSize: '0.7rem' }}>{t('funds.details.return')}</TableCell>
-                                    <TableCell align="right" sx={{ color: '#64748b', fontWeight: 800, fontSize: '0.7rem' }}>{t('funds.details.rank')}</TableCell>
-                                </TableRow>
-                            </TableHead>
-                            <TableBody>
-                                {fundDetails.performance.map((p: any, idx: number) => (
-                                    <TableRow key={idx} hover sx={{ '&:last-child td': { border: 0 } }}>
-                                        <TableCell sx={{ color: '#334155', fontWeight: 700, fontSize: '0.8rem' }}>{p['时间范围']}</TableCell>
-                                        <TableCell align="right" sx={{ 
-                                            fontWeight: 900, 
-                                            fontFamily: 'JetBrains Mono',
-                                            fontSize: '0.85rem',
-                                            color: (p['收益率'] === null || p['收益率'] === undefined) ? '#cbd5e1' : (parseFloat(p['收益率']) >= 0 ? '#ef4444' : '#22c55e')
-                                        }}>
-                                            {p['收益率'] !== null && p['收益率'] !== undefined ? `${p['收益率']}%` : '---'}
-                                        </TableCell>
-                                        <TableCell align="right" sx={{ color: '#94a3b8', fontSize: '0.7rem', fontWeight: 800 }}>{p['同类排名']}</TableCell>
-                                    </TableRow>
-                                ))}
-                            </TableBody>
-                        </Table>
-                    </TableContainer>
-                ) : (
-                    <TableContainer sx={{ borderRadius: '12px', border: '1px solid #f1f5f9', maxHeight: '320px' }}>
-                        <Table size="small" stickyHeader>
-                            <TableHead>
-                                <TableRow>
-                                    <TableCell sx={{ bgcolor: '#f8fafc', color: '#64748b', fontWeight: 800, fontSize: '0.7rem' }}>{t('funds.details.date')}</TableCell>
-                                    <TableCell align="right" sx={{ bgcolor: '#f8fafc', color: '#64748b', fontWeight: 800, fontSize: '0.7rem' }}>{t('funds.details.adj_nav')}</TableCell>
-                                </TableRow>
-                            </TableHead>
-                            <TableBody>
-                                {[...navHistory].reverse().map((point, idx) => (
-                                    <TableRow key={idx} hover sx={{ '&:last-child td': { border: 0 } }}>
-                                        <TableCell sx={{ color: '#64748b', fontFamily: 'JetBrains Mono', fontSize: '0.75rem' }}>{point.date}</TableCell>
-                                        <TableCell align="right" sx={{ fontWeight: 800, color: '#0f172a', fontFamily: 'JetBrains Mono', fontSize: '0.85rem' }}>
-                                            {point.value !== null && point.value !== undefined ? point.value.toFixed(4) : '---'}
-                                        </TableCell>
-                                    </TableRow>
-                                ))}
-                            </TableBody>
-                        </Table>
-                    </TableContainer>
-                )}
-              </Box>
-
-              {/* 3. Strategic Holdings Section */}
-              <Box sx={{ mb: 2 }}>
-                <Typography variant="overline" sx={{ color: '#0f172a', fontWeight: 900, fontSize: '0.75rem', mb: 2, display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <PieChartIcon sx={{ fontSize: 18, color: '#6366f1' }} /> {t('funds.details.core_holdings')}
-                </Typography>
-                {fundDetails.portfolio && fundDetails.portfolio.length > 0 ? (
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-                        {fundDetails.portfolio.map((stock: any, idx: number) => (
-                            <Box key={idx} sx={{ 
-                                p: 1.5, 
-                                borderRadius: '12px', 
-                                border: '1px solid #f1f5f9',
-                                '&:hover': { bgcolor: '#f8fafc' },
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'space-between'
-                            }}>
-                                <Box sx={{ flex: 1 }}>
-                                    <Typography sx={{ color: '#0f172a', fontWeight: 800, fontSize: '0.85rem' }}>{stock['股票名称']}</Typography>
-                                    <Typography sx={{ color: '#94a3b8', fontSize: '0.7rem', fontFamily: 'JetBrains Mono' }}>{stock['股票代码']}</Typography>
-                                </Box>
-                                <Box sx={{ textAlign: 'right', width: '40%' }}>
-                                    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 1.5 }}>
-                                        <Typography sx={{ color: '#6366f1', fontWeight: 900, fontFamily: 'JetBrains Mono', fontSize: '0.85rem' }}>
-                                            {stock['占净值比例']}%
-                                        </Typography>
-                                        <Box sx={{ width: '60px', height: '6px', bgcolor: '#f1f5f9', borderRadius: '3px', overflow: 'hidden' }}>
-                                            <Box sx={{ width: `${stock['占净值比例']}%`, height: '100%', bgcolor: '#6366f1', borderRadius: '3px' }} />
-                                        </Box>
-                                    </Box>
-                                </Box>
-                            </Box>
-                        ))}
-                    </Box>
-                ) : (
-                    <Box sx={{ py: 6, textAlign: 'center', bgcolor: '#f8fafc', borderRadius: '16px', border: '1px dashed #e2e8f0' }}>
-                        <PieChartIcon sx={{ fontSize: 32, color: '#e2e8f0', mb: 1 }} />
-                        <Typography sx={{ color: '#94a3b8', fontSize: '0.8rem', fontWeight: 700 }}>{t('funds.details.no_portfolio')}</Typography>
-                    </Box>
-                )}
-              </Box>
-
-            </Box>
-          ) : (
-             <Box sx={{ py: 15, textAlign: 'center' }}>
-                 <Typography sx={{ color: '#94a3b8', fontWeight: 800 }}>VIBE_ALPHA: NODE_NOT_FOUND</Typography>
-             </Box>
-          )}
-        </DialogContent>
-        <DialogActions sx={{ p: 3, bgcolor: '#fcfcfc', borderTop: '1px solid #f1f5f9' }}>
-          <Button 
-            fullWidth
-            onClick={() => setDetailOpen(false)} 
-            variant="contained" 
-            sx={{ 
-                bgcolor: '#0f172a', 
-                color: '#ffffff',
-                py: 1.5,
-                borderRadius: '12px',
-                textTransform: 'none',
-                fontWeight: 800,
-                fontSize: '0.9rem',
-                boxShadow: 'none',
-                '&:hover': { bgcolor: '#1e293b', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)' }
-            }}
-          >
-            {t('funds.details.close')}
-          </Button>
-        </DialogActions>
-      </Dialog>
+      {/* Enhanced Fund Details Dialog */}
+      <FundDetailDialog
+        open={detailOpen}
+        onClose={() => setDetailOpen(false)}
+        fundCode={selectedFund?.code || ''}
+        fundName={selectedFund?.name || ''}
+      />
     </Box>
   );
 }

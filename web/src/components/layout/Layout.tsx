@@ -33,186 +33,461 @@ import PersonIcon from '@mui/icons-material/Person';
 import ShowChartIcon from '@mui/icons-material/ShowChart';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import MenuBookIcon from '@mui/icons-material/MenuBook';
+import NewspaperIcon from '@mui/icons-material/Newspaper';
+import AccountBalanceWalletIcon from '@mui/icons-material/AccountBalanceWallet';
+
+import ChevronLeftIcon from '@mui/icons-material/ChevronLeft';
+
+import ChevronRightIcon from '@mui/icons-material/ChevronRight';
+
+
 
 import { fetchMarketIndices } from '../../api';
-import type {IndexData} from '../../api';
 
-const drawerWidth = 260;
+import type{IndexData} from '../../api';
+
+
 
 export default function Layout() {
+
   const { t, i18n } = useTranslation();
+
   const navigate = useNavigate();
+
   const location = useLocation();
+
   const [indices, setIndices] = useState<IndexData[]>([]);
+
   const [username, setUsername] = useState<string>('User');
+
+  const [collapsed, setCollapsed] = useState(false);
+
   
+
+  const drawerWidth = collapsed ? 88 : 260;
+
+  
+
   // Language Menu State
+
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
+
   const open = Boolean(anchorEl);
+
   const handleClick = (event: React.MouseEvent<HTMLElement>) => {
+
     setAnchorEl(event.currentTarget);
+
   };
+
   const handleClose = (lang?: string) => {
+
     if (lang) {
+
       i18n.changeLanguage(lang);
+
     }
+
     setAnchorEl(null);
+
   };
+
+
 
   // User Menu State
+
   const [userAnchorEl, setUserAnchorEl] = useState<null | HTMLElement>(null);
+
   const userOpen = Boolean(userAnchorEl);
+
   const handleUserClick = (event: React.MouseEvent<HTMLElement>) => {
+
     setUserAnchorEl(event.currentTarget);
+
   };
+
   const handleUserClose = () => {
+
     setUserAnchorEl(null);
+
   };
+
   const handleLogout = () => {
+
       localStorage.removeItem('token');
+
       window.location.href = '/login';
+
   };
+
+
 
   const MENU_ITEMS = useMemo(() => [
+
     { text: t('layout.menu.dashboard'), icon: <SpeedIcon />, path: '/dashboard', subtitle: t('layout.menu.dashboard_sub') },
+
     { text: t('layout.menu.universe'), icon: <PieChartIcon />, path: '/funds', subtitle: t('layout.menu.universe_sub') },
+
+    { text: t('layout.menu.portfolio'), icon: <AccountBalanceWalletIcon />, path: '/portfolio', subtitle: t('layout.menu.portfolio_sub') },
+
     { text: t('layout.menu.stocks'), icon: <ShowChartIcon />, path: '/stocks', subtitle: t('layout.menu.stocks_sub') },
+
     { text: t('layout.menu.recommendations'), icon: <AutoAwesomeIcon />, path: '/recommendations', subtitle: t('layout.menu.recommendations_sub') },
+
+    { text: t('layout.menu.news'), icon: <NewspaperIcon />, path: '/news', subtitle: t('layout.menu.news_sub') },
+
     { text: t('layout.menu.sentiment'), icon: <AutoGraphIcon />, path: '/sentiment', subtitle: t('layout.menu.sentiment_sub') },
+
     { text: t('layout.menu.intelligence'), icon: <ArticleIcon />, path: '/reports', subtitle: t('layout.menu.intelligence_sub') },
+
     { text: t('layout.menu.commodities'), icon: <MonetizationOnIcon />, path: '/commodities', subtitle: t('layout.menu.commodities_sub') },
+
     { text: t('layout.menu.system'), icon: <SettingsIcon />, path: '/settings', subtitle: t('layout.menu.system_sub') },
+
   ], [t]);
 
+
+
   useEffect(() => {
+
     // Load Indices
+
     const loadIndices = async () => {
+
       try {
+
         const data = await fetchMarketIndices();
+
         setIndices(data);
+
       } catch (err) {
+
         console.error("Failed to load market indices", err);
+
       }
-    };
-    
-    // Load User Info
-    const loadUser = async () => {
-        try {
-            // We can decode token or fetch /api/auth/me
-            // Let's decode token for speed, or assume it's valid if we are here (guarded by PrivateRoute)
-            const token = localStorage.getItem('token');
-            if (token) {
-                try {
-                    // Simple parse
-                    const base64Url = token.split('.')[1];
-                    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-                    const jsonPayload = decodeURIComponent(window.atob(base64).split('').map(function(c) {
-                        return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
-                    }).join(''));
-                    const payload = JSON.parse(jsonPayload);
-                    setUsername(payload.sub || 'User');
-                } catch (e) {
-                    console.error("Failed to parse token", e);
-                }
-            }
-        } catch (err) {
-            console.error(err);
-        }
+
     };
 
+    
+
+    // Load User Info
+
+    const loadUser = async () => {
+
+        try {
+
+            // We can decode token or fetch /api/auth/me
+
+            // Let's decode token for speed, or assume it's valid if we are here (guarded by PrivateRoute)
+
+            const token = localStorage.getItem('token');
+
+            if (token) {
+
+                try {
+
+                    // Simple parse
+
+                    const base64Url = token.split('.')[1];
+
+                    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+
+                    const jsonPayload = decodeURIComponent(window.atob(base64).split('').map(function(c) {
+
+                        return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+
+                    }).join(''));
+
+                    const payload = JSON.parse(jsonPayload);
+
+                    setUsername(payload.sub || 'User');
+
+                } catch (e) {
+
+                    console.error("Failed to parse token", e);
+
+                }
+
+            }
+
+        } catch (err) {
+
+            console.error(err);
+
+        }
+
+    };
+
+
+
     loadIndices();
+
     loadUser();
+
     const timer = setInterval(loadIndices, 60000); // Refresh every 60s
+
     return () => clearInterval(timer);
+
   }, []);
+
+
 
   const currentItem = MENU_ITEMS.find(item => location.pathname.startsWith(item.path)) || MENU_ITEMS[0];
 
+
+
   return (
+
     <div className="flex min-h-screen bg-white text-slate-900 font-sans">
+
       {/* Navigation Sidebar */}
+
       <Drawer
+
         variant="permanent"
+
         sx={{
+
           width: drawerWidth,
+
           flexShrink: 0,
+
+          whiteSpace: 'nowrap',
+
+          transition: 'width 0.3s ease-in-out',
+
           [`& .MuiDrawer-paper`]: { 
+
             width: drawerWidth, 
+
             boxSizing: 'border-box',
+
             borderRight: '1px solid #f1f5f9',
+
             backgroundColor: '#ffffff',
+
+            transition: 'width 0.3s ease-in-out',
+
+            overflowX: 'hidden',
+
           },
+
         }}
+
       >
-        <div className="h-20 flex items-center px-6 border-b border-slate-50">
-          <img src="/vite.svg" alt="Logo" className="w-8 h-8 mr-3 shadow-sm rounded-xl" />
-          <div className="flex flex-col">
-            <Typography variant="h6" className="tracking-wide font-bold text-slate-900 leading-none" sx={{ fontFamily: 'JetBrains Mono' }}>
-              V<span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-500 to-purple-600">{t('layout.title')}</span>
-            </Typography>
-          </div>
-        </div>
-        
-        <div className="flex-1 py-6 px-3 overflow-y-auto">
-          <List className="space-y-1">
-            {MENU_ITEMS.map((item) => {
-               const isActive = location.pathname.startsWith(item.path);
-               return (
-                <ListItem key={item.path} disablePadding>
-                  <ListItemButton 
-                    selected={isActive}
-                    onClick={() => navigate(item.path)}
-                    sx={{
-                      borderRadius: '12px',
-                      py: 1.5,
-                      '&.Mui-selected': {
-                        backgroundColor: '#f8fafc',
-                        '&:hover': { backgroundColor: '#f1f5f9' },
-                        '&::before': {
-                            content: '""',
-                            position: 'absolute',
-                            left: -12,
-                            width: 4,
-                            height: 24,
-                            borderRadius: '0 4px 4px 0',
-                            bgcolor: '#6366f1'
-                        }
-                      },
-                      '&:hover': { backgroundColor: '#f8fafc' }
-                    }}
-                  >
-                    <ListItemIcon sx={{ 
-                      minWidth: 40, 
-                      color: isActive ? '#6366f1' : '#94a3b8' 
-                    }}>
-                      {item.icon}
-                    </ListItemIcon>
-                    <ListItemText 
-                      primary={item.text} 
-                      primaryTypographyProps={{ 
-                        fontWeight: isActive ? 800 : 600,
-                        fontSize: '0.85rem',
-                        color: isActive ? '#0f172a' : '#64748b'
-                      }}
-                    />
-                  </ListItemButton>
-                </ListItem>
-              );
-            })}
-          </List>
+
+        <div className={`h-20 flex items-center ${collapsed ? 'justify-center' : 'justify-between px-6'} border-b border-slate-50 transition-all duration-300`}>
+
+          {!collapsed && (
+
+            <div className="flex items-center min-w-0">
+
+              <img src="/vite.svg" alt="Logo" className="w-8 h-8 mr-3 shadow-sm rounded-xl flex-shrink-0" />
+
+              <div className="flex flex-col min-w-0">
+
+                <Typography variant="h6" className="tracking-wide font-bold text-slate-900 leading-none truncate" sx={{ fontFamily: 'JetBrains Mono' }}>
+
+                  V<span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-500 to-purple-600">{t('layout.title')}</span>
+
+                </Typography>
+
+              </div>
+
+            </div>
+
+          )}
+
+          {collapsed && (
+
+             <img src="/vite.svg" alt="Logo" className="w-8 h-8 shadow-sm rounded-xl mb-2" />
+
+          )}
+
+          
+
+          <IconButton 
+
+            onClick={() => setCollapsed(!collapsed)} 
+
+            size="small"
+
+            sx={{ 
+
+                color: '#94a3b8', 
+
+                '&:hover': { color: '#6366f1', bgcolor: '#f8fafc' },
+
+                ...(collapsed && { mt: 1 })
+
+            }}
+
+          >
+
+            {collapsed ? <ChevronRightIcon /> : <ChevronLeftIcon />}
+
+          </IconButton>
+
         </div>
 
-        <Box sx={{ p: 3, borderTop: '1px solid #f1f5f9' }}>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, p: 1.5, bgcolor: '#f8fafc', borderRadius: '12px' }}>
+        
+
+        <div className="flex-1 py-6 px-3 overflow-y-auto overflow-x-hidden">
+
+          <List className="space-y-1">
+
+            {MENU_ITEMS.map((item) => {
+
+               const isActive = location.pathname.startsWith(item.path);
+
+               return (
+
+                <ListItem key={item.path} disablePadding sx={{ display: 'block' }}>
+
+                  <Tooltip title={collapsed ? item.text : ""} placement="right" arrow>
+
+                      <ListItemButton 
+
+                        selected={isActive}
+
+                        onClick={() => navigate(item.path)}
+
+                        sx={{
+
+                          minHeight: 48,
+
+                          borderRadius: '12px',
+
+                          justifyContent: collapsed ? 'center' : 'initial',
+
+                          px: 2.5,
+
+                          '&.Mui-selected': {
+
+                            backgroundColor: '#f8fafc',
+
+                            '&:hover': { backgroundColor: '#f1f5f9' },
+
+                            '&::before': {
+
+                                content: '""',
+
+                                position: 'absolute',
+
+                                left: collapsed ? 2 : -12,
+
+                                width: 4,
+
+                                height: 24,
+
+                                borderRadius: collapsed ? '4px' : '0 4px 4px 0',
+
+                                bgcolor: '#6366f1'
+
+                            }
+
+                          },
+
+                          '&:hover': { backgroundColor: '#f8fafc' }
+
+                        }}
+
+                      >
+
+                        <ListItemIcon sx={{ 
+
+                          minWidth: 0,
+
+                          mr: collapsed ? 0 : 2,
+
+                          justifyContent: 'center',
+
+                          color: isActive ? '#6366f1' : '#94a3b8' 
+
+                        }}>
+
+                          {item.icon}
+
+                        </ListItemIcon>
+
+                        <ListItemText 
+
+                          primary={item.text} 
+
+                          primaryTypographyProps={{ 
+
+                            fontWeight: isActive ? 800 : 600,
+
+                            fontSize: '0.85rem',
+
+                            color: isActive ? '#0f172a' : '#64748b'
+
+                          }}
+
+                          sx={{ opacity: collapsed ? 0 : 1, display: collapsed ? 'none' : 'block' }}
+
+                        />
+
+                      </ListItemButton>
+
+                  </Tooltip>
+
+                </ListItem>
+
+              );
+
+            })}
+
+          </List>
+
+        </div>
+
+
+
+        <Box sx={{ p: collapsed ? 1.5 : 3, borderTop: '1px solid #f1f5f9' }}>
+
+            <Box sx={{ 
+
+                display: 'flex', 
+
+                alignItems: 'center', 
+
+                justifyContent: collapsed ? 'center' : 'flex-start',
+
+                gap: collapsed ? 0 : 2, 
+
+                p: 1.5, 
+
+                bgcolor: '#f8fafc', 
+
+                borderRadius: '12px',
+
+                minHeight: 52 
+
+            }}>
+
                 <Avatar sx={{ width: 32, height: 32, bgcolor: '#6366f1', fontSize: '0.8rem', fontWeight: 800 }}>
+
                     {username.charAt(0).toUpperCase()}
+
                 </Avatar>
-                <Box>
-                    <Typography sx={{ fontSize: '0.75rem', fontWeight: 800, color: '#1e293b' }}>{username}</Typography>
-                    <Typography sx={{ fontSize: '0.65rem', color: '#94a3b8', fontWeight: 600 }}>Pro License</Typography>
-                </Box>
+
+                {!collapsed && (
+
+                    <Box sx={{ minWidth: 0 }}>
+
+                        <Typography sx={{ fontSize: '0.75rem', fontWeight: 800, color: '#1e293b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{username}</Typography>
+
+                        <Typography sx={{ fontSize: '0.65rem', color: '#94a3b8', fontWeight: 600, whiteSpace: 'nowrap' }}>Pro License</Typography>
+
+                    </Box>
+
+                )}
+
             </Box>
+
         </Box>
+
       </Drawer>
 
       {/* Main Content Area */}
